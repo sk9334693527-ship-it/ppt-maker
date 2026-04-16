@@ -1,8 +1,8 @@
 import os
 import re
+import json
+import time
 from pptx import Presentation
-from pptx.util import Inches, Pt
-from pptx.dml.color import RGBColor
 
 from telegram import Update
 from telegram.ext import (
@@ -13,72 +13,49 @@ from telegram.ext import (
     ContextTypes,
 )
 
-from openai import OpenAI
-import google.generativeai as genai
-
 # ===== CONFIG =====
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
+DB_FILE = "users.json"
+
+# ===== DATABASE =====
+def load_db():
+    if os.path.exists(DB_FILE):
+        with open(DB_FILE, "r") as f:
+            return json.load(f)
+    return {"users": {}}
+
+def save_db():
+    with open(DB_FILE, "w") as f:
+        json.dump(db, f)
+
+db = load_db()
+user_db = db["users"]
+
+# ===== USER INIT =====
+def init_user(user_id):
+    if user_id not in user_db:
+        user_db[user_id] = {
+            "credits": 10,   # default credits
+            "history": []
+        }
+        save_db()
 
 # ===== MEMORY =====
 user_data_store = {}
 
-# ===== AI FUNCTIONS =====
-def try_gemini(prompt):
-    api_key = os.getenv("GEMINI_API_KEY")
-    if not api_key:
-        return None
-
-    try:
-        genai.configure(api_key=api_key)
-        model = genai.GenerativeModel("gemini-1.5-flash")
-        res = model.generate_content(prompt)
-        return res.text
-    except:
-        return None
-
-
-def try_openai(prompt):
-    api_key = os.getenv("OPENAI_API_KEY")
-    if not api_key:
-        return None
-
-    try:
-        client = OpenAI(api_key=api_key)
-        res = client.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=[{"role": "user", "content": prompt}],
-        )
-        return res.choices[0].message.content
-    except:
-        return None
-
-
 # ===== TEXT PROCESS =====
 def process_text(text):
-    prompt = f"Convert into MCQ format:\n\n{text}"
-
-    res = try_gemini(prompt)
-    if res:
-        return res
-
-    res = try_openai(prompt)
-    if res:
-        return res
-
-    # fallback
     lines = text.split("\n")
     return "\n\n".join([
         f"Question: {l}\nA) ...\nB) ...\nC) ...\nD) ..."
         for l in lines if len(l.strip()) > 5
     ])
 
-
 def split_questions(text):
     parts = re.split(r"Question:", text)
     return [p.strip() for p in parts if p.strip()]
 
-
-# ===== PPT CREATE =====
+# ===== PPT =====
 def create_ppt(questions, filename):
     prs = Presentation()
 
@@ -86,58 +63,74 @@ def create_ppt(questions, filename):
         slide = prs.slides.add_slide(prs.slide_layouts[1])
 
         lines = q.split("\n")
-        title = slide.shapes.title
-        content = slide.placeholders[1]
-
-        title.text = f"{i}. {lines[0]}"
-        content.text = "\n".join(lines[1:])
+        slide.shapes.title.text = f"{i}. {lines[0]}"
+        slide.placeholders[1].text = "\n".join(lines[1:])
 
     prs.save(filename)
     return filename
 
-
 # ===== COMMANDS =====
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = str(update.message.chat_id)
+    init_user(user_id)
+
+    credits = user_db[user_id]["credits"]
+
     user_data_store.setdefault(user_id, "")
 
     await update.message.reply_text(
-        "👋 Send text and then type 'make' to generate PPT"
+        f"👋 Welcome!\n\n💰 Your Credits: {credits}\n\nSend text then type 'make'"
     )
 
-
-# ===== MAIN HANDLER =====
+# ===== MAIN =====
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = str(update.message.chat_id)
     text = update.message.text or ""
 
+    init_user(user_id)
     user_data_store.setdefault(user_id, "")
 
+    # MAKE PPT
     if text.lower() == "make":
         data = user_data_store[user_id]
 
         if not data.strip():
-            await update.message.reply_text("Send some text first")
+            await update.message.reply_text("Send text first")
             return
 
-        await update.message.reply_text("Processing...")
+        questions = split_questions(process_text(data))
+        slides = len(questions)
 
-        formatted = process_text(data)
-        questions = split_questions(formatted)
+        credits = user_db[user_id]["credits"]
 
-        file = create_ppt(questions, "output.pptx")
+        if credits < slides:
+            await update.message.reply_text(
+                f"❌ Not enough credits\nNeeded: {slides}, You have: {credits}"
+            )
+            return
 
-        await update.message.reply_document(open(file, "rb"))
+        # deduct credits
+        user_db[user_id]["credits"] -= slides
+
+        ppt = create_ppt(questions, "output.pptx")
+
+        user_db[user_id]["history"].append({
+            "slides": slides,
+            "time": time.strftime("%Y-%m-%d %H:%M")
+        })
+
+        save_db()
+
+        await update.message.reply_document(open(ppt, "rb"))
 
         user_data_store[user_id] = ""
         return
 
-    # store text
+    # SAVE TEXT
     if text:
         user_data_store[user_id] += text + "\n"
 
-    await update.message.reply_text("Saved. Send more or type 'make'")
-
+    await update.message.reply_text("Saved. Type 'make'")
 
 # ===== RUN =====
 app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
