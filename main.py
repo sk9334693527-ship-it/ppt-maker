@@ -15,7 +15,7 @@ from telegram.ext import (
 
 # ===== CONFIG =====
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
-ADMIN_ID = "123456789"   # ⚠️ apna Telegram ID daalo
+ADMIN_ID = "7906677916"   # ⚠️ apna Telegram ID daalo
 ADMIN_PASSWORD = "admin123"
 
 DB_FILE = "users.json"
