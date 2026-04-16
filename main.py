@@ -1,11 +1,16 @@
+import os
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
 
+# token from Railway ENV
+TOKEN = os.getenv("BOT_TOKEN")
+
+# /start command
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     
     name = user.first_name
-    username = user.username
+    username = user.username if user.username else "No Username"
     user_id = user.id
 
     message = f"""
@@ -19,7 +24,9 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await update.message.reply_text(message)
 
-app = ApplicationBuilder().token("YOUR_BOT_TOKEN").build()
+# app setup
+app = ApplicationBuilder().token(TOKEN).build()
+
 app.add_handler(CommandHandler("start", start))
 
 print("Bot running...")
