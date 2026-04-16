@@ -15,6 +15,9 @@ from telegram.ext import (
 
 # ===== CONFIG =====
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
+ADMIN_ID = "123456789"   # ⚠️ apna Telegram ID daalo
+ADMIN_PASSWORD = "admin123"
+
 DB_FILE = "users.json"
 
 # ===== DATABASE =====
@@ -35,13 +38,14 @@ user_db = db["users"]
 def init_user(user_id):
     if user_id not in user_db:
         user_db[user_id] = {
-            "credits": 10,   # default credits
+            "credits": 5,
             "history": []
         }
         save_db()
 
 # ===== MEMORY =====
 user_data_store = {}
+admin_sessions = {}
 
 # ===== TEXT PROCESS =====
 def process_text(text):
@@ -61,15 +65,15 @@ def create_ppt(questions, filename):
 
     for i, q in enumerate(questions, start=1):
         slide = prs.slides.add_slide(prs.slide_layouts[1])
-
         lines = q.split("\n")
+
         slide.shapes.title.text = f"{i}. {lines[0]}"
         slide.placeholders[1].text = "\n".join(lines[1:])
 
     prs.save(filename)
     return filename
 
-# ===== COMMANDS =====
+# ===== START =====
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = str(update.message.chat_id)
     init_user(user_id)
@@ -79,8 +83,19 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_data_store.setdefault(user_id, "")
 
     await update.message.reply_text(
-        f"👋 Welcome!\n\n💰 Your Credits: {credits}\n\nSend text then type 'make'"
+        f"👋 Welcome!\n\n💰 Credits: {credits}\n\nSend text → then type 'make'"
     )
+
+# ===== ADMIN =====
+async def admin_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = str(update.message.chat_id)
+
+    if user_id != ADMIN_ID:
+        await update.message.reply_text("❌ Not allowed")
+        return
+
+    admin_sessions[user_id] = {"step": "password"}
+    await update.message.reply_text("Enter Password:")
 
 # ===== MAIN =====
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -90,7 +105,59 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     init_user(user_id)
     user_data_store.setdefault(user_id, "")
 
-    # MAKE PPT
+    # ===== ADMIN FLOW =====
+    if user_id in admin_sessions:
+        session = admin_sessions[user_id]
+
+        if session["step"] == "password":
+            if text == ADMIN_PASSWORD:
+                session["step"] = "panel"
+                await update.message.reply_text(
+                    "Admin Panel:\nadd / view / exit"
+                )
+            else:
+                await update.message.reply_text("Wrong password")
+            return
+
+        elif session["step"] == "panel":
+            if text == "add":
+                session["step"] = "user_id"
+                await update.message.reply_text("Send User ID:")
+                return
+
+            elif text == "view":
+                msg = "\n".join([
+                    f"{uid} → {data['credits']}"
+                    for uid, data in user_db.items()
+                ]) or "No users"
+                await update.message.reply_text(msg)
+                return
+
+            elif text == "exit":
+                del admin_sessions[user_id]
+                await update.message.reply_text("Exited")
+                return
+
+        elif session["step"] == "user_id":
+            session["target"] = text
+            session["step"] = "amount"
+            await update.message.reply_text("Credits amount:")
+            return
+
+        elif session["step"] == "amount":
+            target = session["target"]
+
+            if target not in user_db:
+                user_db[target] = {"credits": 0, "history": []}
+
+            user_db[target]["credits"] += int(text)
+            save_db()
+
+            await update.message.reply_text("✅ Credits added")
+            session["step"] = "panel"
+            return
+
+    # ===== MAKE PPT =====
     if text.lower() == "make":
         data = user_data_store[user_id]
 
@@ -105,11 +172,10 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         if credits < slides:
             await update.message.reply_text(
-                f"❌ Not enough credits\nNeeded: {slides}, You have: {credits}"
+                f"❌ Not enough credits\nNeed: {slides}, You have: {credits}"
             )
             return
 
-        # deduct credits
         user_db[user_id]["credits"] -= slides
 
         ppt = create_ppt(questions, "output.pptx")
@@ -126,7 +192,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         user_data_store[user_id] = ""
         return
 
-    # SAVE TEXT
+    # ===== SAVE TEXT =====
     if text:
         user_data_store[user_id] += text + "\n"
 
@@ -136,6 +202,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
 
 app.add_handler(CommandHandler("start", start))
+app.add_handler(CommandHandler("admin", admin_cmd))
 app.add_handler(MessageHandler(filters.TEXT, handle_message))
 
 print("✅ Bot Running...")
