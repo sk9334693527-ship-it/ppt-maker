@@ -22,10 +22,10 @@ def save_user(user_id, name, credit, expiry):
     }
 
     try:
-        requests.post(WEB_URL, json=data)
-    except:
-        pass
-
+        r = requests.post(WEB_URL, json=data)
+        print("SHEET RESPONSE:", r.text)
+    except Exception as e:
+        print("ERROR:", e)
 # ===== /start =====
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
