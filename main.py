@@ -1,7 +1,6 @@
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
 
-# /start command
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     
@@ -20,15 +19,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await update.message.reply_text(message)
 
-# main function
-async def main():
-    app = ApplicationBuilder().token("8792376975:AAHkgmmlTGRVG08yogD2sJl3oHq-lStTEIo").build()
+app = ApplicationBuilder().token("YOUR_BOT_TOKEN").build()
+app.add_handler(CommandHandler("start", start))
 
-    app.add_handler(CommandHandler("start", start))
-
-    print("Bot is running...")
-    await app.run_polling()
-
-if __name__ == "__main__":
-    import asyncio
-    asyncio.run(main())
+print("Bot running...")
+app.run_polling()
