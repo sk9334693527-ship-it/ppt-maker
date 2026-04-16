@@ -1,38 +1,45 @@
 import os
 import time
+import requests
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes, MessageHandler, filters
 
+# ===== ENV VARIABLES =====
 TOKEN = os.getenv("BOT_TOKEN")
 ADMIN_ID = int(os.getenv("ADMIN_ID"))
 ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD")
+WEB_URL = os.getenv("WEB_URL")  # Google Apps Script URL
 
-users = {}
 admin_state = {}
 
-# /start
+# ===== SAVE FUNCTION =====
+def save_user(user_id, name, credit, expiry):
+    data = {
+        "user_id": str(user_id),
+        "name": name,
+        "credit": credit,
+        "expiry": expiry
+    }
+
+    try:
+        requests.post(WEB_URL, json=data)
+    except:
+        pass
+
+# ===== /start =====
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
-    user_id = user.id
 
-    if user_id not in users:
-        users[user_id] = {"credit": 0, "expiry": 0}
-
-    credit = users[user_id]["credit"]
-    expiry = users[user_id]["expiry"]
-
-    remaining_days = 0
-    if expiry > time.time():
-        remaining_days = int((expiry - time.time()) / 86400)
+    save_user(user.id, user.first_name, 0, 0)
 
     await update.message.reply_text(
-        f"👋 Hello {user.first_name}\n\n"
-        f"🆔 ID: {user_id}\n"
-        f"💰 Credit: {credit}\n"
-        f"⏳ Days Left: {remaining_days}"
+        f"👋 Hello {user.first_name}\n"
+        f"🆔 ID: {user.id}\n"
+        f"💰 Credit: 0\n"
+        f"⏳ Days: 0"
     )
 
-# /admin
+# ===== /admin =====
 async def admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
 
@@ -43,7 +50,7 @@ async def admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
     admin_state[user_id] = "password"
     await update.message.reply_text("🔐 Enter Admin Password:")
 
-# /add
+# ===== /add =====
 async def add(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
 
@@ -54,12 +61,12 @@ async def add(update: Update, context: ContextTypes.DEFAULT_TYPE):
     admin_state[user_id] = "ask_user"
     await update.message.reply_text("Enter User ID:")
 
-# handle messages
+# ===== MESSAGE HANDLER =====
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     text = update.message.text
 
-    # password check
+    # LOGIN PASSWORD
     if admin_state.get(user_id) == "password":
         if text == ADMIN_PASSWORD:
             admin_state[user_id] = "logged_in"
@@ -67,49 +74,44 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         else:
             await update.message.reply_text("❌ Wrong Password")
 
-    # ask user id
+    # ASK USER ID
     elif admin_state.get(user_id) == "ask_user":
-        admin_state[user_id] = {"step": "choose_type", "target": int(text)}
-        await update.message.reply_text("Type 'credit' or 'day'")
+        admin_state[user_id] = {"step": "choose", "target": text}
+        await update.message.reply_text("Type: credit or day")
 
-    # choose type
-    elif isinstance(admin_state.get(user_id), dict) and admin_state[user_id]["step"] == "choose_type":
+    # CHOOSE TYPE
+    elif isinstance(admin_state.get(user_id), dict) and admin_state[user_id]["step"] == "choose":
         if text.lower() == "credit":
-            admin_state[user_id]["step"] = "add_credit"
+            admin_state[user_id]["step"] = "credit_add"
             await update.message.reply_text("Enter credit amount:")
-        elif text.lower() == "day":
-            admin_state[user_id]["step"] = "add_day"
-            await update.message.reply_text("Enter days:")
-        else:
-            await update.message.reply_text("Type 'credit' or 'day'")
 
-    # add credit
-    elif isinstance(admin_state.get(user_id), dict) and admin_state[user_id]["step"] == "add_credit":
+        elif text.lower() == "day":
+            admin_state[user_id]["step"] = "day_add"
+            await update.message.reply_text("Enter days:")
+
+    # ADD CREDIT
+    elif isinstance(admin_state.get(user_id), dict) and admin_state[user_id]["step"] == "credit_add":
         amount = int(text)
         target = admin_state[user_id]["target"]
 
-        if target not in users:
-            users[target] = {"credit": 0, "expiry": 0}
+        save_user(target, "User", amount, 0)
 
-        users[target]["credit"] += amount
         admin_state[user_id] = "logged_in"
+        await update.message.reply_text(f"✅ {amount} credit added")
 
-        await update.message.reply_text(f"✅ {amount} credit added to {target}")
-
-    # add day
-    elif isinstance(admin_state.get(user_id), dict) and admin_state[user_id]["step"] == "add_day":
+    # ADD DAYS
+    elif isinstance(admin_state.get(user_id), dict) and admin_state[user_id]["step"] == "day_add":
         days = int(text)
         target = admin_state[user_id]["target"]
 
-        if target not in users:
-            users[target] = {"credit": 0, "expiry": 0}
+        expiry = int(time.time()) + (days * 86400)
 
-        users[target]["expiry"] = time.time() + (days * 86400)
+        save_user(target, "User", 0, expiry)
+
         admin_state[user_id] = "logged_in"
+        await update.message.reply_text(f"✅ {days} days added")
 
-        await update.message.reply_text(f"✅ {days} days added to {target}")
-
-# app
+# ===== APP START =====
 app = ApplicationBuilder().token(TOKEN).build()
 
 app.add_handler(CommandHandler("start", start))
