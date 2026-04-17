@@ -18,7 +18,7 @@ from pptx.util import Pt
 # =========================
 # 🔐 CONFIG
 # =========================
-BOT_TOKEN = "YOUR_BOT_TOKEN"
+BOT_TOKEN = "BOT_TOKEN"
 
 ADMIN_ID = 123456789
 PASSWORD = "YOUR_PASSWORD"
@@ -68,7 +68,7 @@ def init_user(user):
 def get_model():
     key = random.choice(GEMINI_API_KEYS)
     genai.configure(api_key=key)
-    return genai.GenerativeModel("gemini-1.5-flash")
+    return genai.GenerativeModel("gemini-2.5-flash")
 
 def call_ai(prompt):
     try:
