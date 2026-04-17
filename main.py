@@ -1,121 +1,310 @@
 import os
 import json
-from telegram import Update
+import random
+from datetime import datetime
+
+import pdfplumber
+import pytesseract
+import cv2
+import numpy as np
+
+import google.generativeai as genai
+
+from telegram import Update, InputFile
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
 
-# ---------------- TOKEN (Railway ENV) ----------------
-TOKEN = os.getenv("BOT_TOKEN")
+from pptx import Presentation
+from pptx.util import Pt
 
-if not TOKEN:
-    raise Exception("❌ BOT_TOKEN missing in Railway Variables")
+# =========================
+# 🔐 CONFIG
+# =========================
+BOT_TOKEN = "YOUR_BOT_TOKEN"
 
-# ---------------- LOCAL DATABASE ----------------
-DB_FILE = "data.json"
+ADMIN_ID = 123456789
+PASSWORD = "YOUR_PASSWORD"
+NUMBER = "YOUR_NUMBER"
 
-def load_db():
-    if not os.path.exists(DB_FILE):
+GEMINI_API_KEYS = [
+    "GEMINI1_API",
+    "GEMINI2_API",
+    "GEMINI3_API"
+]
+
+DATA_FILE = "data.json"
+
+pytesseract.pytesseract.tesseract_cmd = r"C:\Program Files\Tesseract-OCR\tesseract.exe"
+
+# =========================
+# 💾 DATA
+# =========================
+def load_data():
+    if not os.path.exists(DATA_FILE):
         return {}
-    with open(DB_FILE, "r") as f:
+    with open(DATA_FILE, "r") as f:
         return json.load(f)
 
-def save_db(data):
-    with open(DB_FILE, "w") as f:
-        json.dump(data, f, indent=4)
+def save_data(data):
+    with open(DATA_FILE, "w") as f:
+        json.dump(data, f)
 
-def get_user(data, user_id, name):
-    user_id = str(user_id)
-    if user_id not in data:
-        data[user_id] = {
-            "name": name,
-            "credit": 0
+data = load_data()
+
+def init_user(user):
+    uid = str(user.id)
+    if uid not in data:
+        data[uid] = {
+            "name": user.first_name,
+            "credits": 20,
+            "history": [],
+            "background": False
         }
-    return data[user_id]
+        save_data(data)
 
-# ---------------- START COMMAND ----------------
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    data = load_db()
-    user = update.effective_user
+# =========================
+# 🤖 GEMINI AI
+# =========================
+def get_ai():
+    key = random.choice(GEMINI_API_KEYS)
+    genai.configure(api_key=key)
+    return genai.GenerativeModel("gemini-1.5-flash")
 
-    u = get_user(data, user.id, user.first_name)
-    save_db(data)
-
-    await update.message.reply_text(
-        f"👋 Welcome {u['name']}\n\n"
-        f"🆔 ID: {user.id}\n"
-        f"💰 Credit: {u['credit']}"
-    )
-
-# ---------------- INFO COMMAND ----------------
-async def myinfo(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    data = load_db()
-    user = update.effective_user
-
-    u = get_user(data, user.id, user.first_name)
-    save_db(data)
-
-    await update.message.reply_text(
-        f"📊 USER INFO\n\n"
-        f"👤 Name: {u['name']}\n"
-        f"🆔 ID: {user.id}\n"
-        f"💰 Credit: {u['credit']}"
-    )
-
-# ---------------- ADD CREDIT (ADMIN) ----------------
-async def add(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    data = load_db()
-
+def call_ai(prompt):
     try:
-        target_id = context.args[0]
-        amount = int(context.args[1])
+        model = get_ai()
+        res = model.generate_content(prompt)
+        return res.text
     except:
-        await update.message.reply_text("❌ Use: /add user_id amount")
+        return "AI ERROR"
+
+# =========================
+# 📄 OCR IMAGE → TEXT
+# =========================
+def image_to_text(path):
+    img = cv2.imread(path)
+    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+    text = pytesseract.image_to_string(gray)
+    return text
+
+# =========================
+# 📄 PDF → TEXT
+# =========================
+def pdf_to_text(path):
+    text = ""
+    with pdfplumber.open(path) as pdf:
+        for page in pdf.pages:
+            t = page.extract_text()
+            if t:
+                text += t + "\n"
+    return text
+
+# =========================
+# 🧠 AI PROMPT ENGINE
+# =========================
+def build_prompt(text, bilingual=False):
+    if bilingual:
+        return f"""
+Convert into MCQ PPT content.
+
+RULES:
+- Hindi + English
+- One question per slide
+- Format:
+
+Q:
+Hindi line
+English line
+A)
+B)
+C)
+D)
+
+TEXT:
+{text}
+"""
+    else:
+        return f"""
+Convert into MCQ PPT content.
+
+RULES:
+- Only English
+- One question per slide
+- Format:
+
+Q:
+A)
+B)
+C)
+D)
+
+TEXT:
+{text}
+"""
+
+# =========================
+# 🎞 PPT GENERATOR
+# =========================
+def create_ppt(slides, filename):
+    prs = Presentation()
+
+    for s in slides:
+        slide = prs.slides.add_slide(prs.slide_layouts[1])
+        title = slide.shapes.title
+        body = slide.placeholders[1]
+
+        title.text = "Question"
+        body.text = s
+
+        for p in body.text_frame.paragraphs:
+            for r in p.runs:
+                r.font.size = Pt(18)
+
+    prs.save(filename)
+    return filename
+
+# =========================
+# 👤 START
+# =========================
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.message.from_user
+    init_user(user)
+
+    uid = str(user.id)
+    d = data[uid]
+
+    msg = f"""
+👤 Name: {d['name']}
+🆔 ID: {uid}
+💳 Credits: {d['credits']}
+
+📌 MENU:
+/objective
+/objective2
+/topic
+/prompt
+/prompt2
+/background
+/dbackground
+/admin
+
+📞 {NUMBER}
+"""
+    await update.message.reply_text(msg)
+
+# =========================
+# 🎯 OBJECTIVE MODE (ENGLISH MCQ)
+# =========================
+async def objective(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("📥 Send text/image/pdf → English MCQ PPT")
+
+# =========================
+# 🎯 OBJECTIVE2 (BILINGUAL)
+# =========================
+async def objective2(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("📥 Send content → Hindi + English MCQ PPT")
+
+# =========================
+# 📥 BACKGROUND
+# =========================
+async def background(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("📤 Send background file (pptx)")
+
+async def dbackground(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    uid = str(update.message.from_user.id)
+    data[uid]["background"] = False
+    save_data(data)
+    await update.message.reply_text("❌ Background removed")
+
+# =========================
+# 🔐 ADMIN
+# =========================
+async def admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("🔐 Send password:")
+
+async def admin_auth(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.message.text == PASSWORD and update.message.from_user.id == ADMIN_ID:
+        await update.message.reply_text("""
+✅ ADMIN PANEL
+
+/add - add credit
+/user - users
+/history - history
+/credit - credits
+""")
+    else:
+        await update.message.reply_text("❌ Not allowed")
+
+# =========================
+# 🧠 MAIN HANDLER (FULL AI ENGINE)
+# =========================
+async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.message.from_user
+    init_user(user)
+
+    uid = str(user.id)
+
+    if data[uid]["credits"] <= 0:
+        await update.message.reply_text("❌ No credits left")
         return
 
-    if target_id not in data:
-        data[target_id] = {"name": "User", "credit": 0}
+    text = ""
 
-    data[target_id]["credit"] += amount
-    save_db(data)
+    # TEXT
+    if update.message.text:
+        text = update.message.text
 
-    await update.message.reply_text(
-        f"✅ Added {amount} credit\n"
-        f"🆔 User: {target_id}\n"
-        f"💰 Total: {data[target_id]['credit']}"
-    )
+    # IMAGE
+    elif update.message.photo:
+        file = await update.message.photo[-1].get_file()
+        path = f"{uid}.jpg"
+        await file.download_to_drive(path)
+        text = image_to_text(path)
 
-# ---------------- MESSAGE HANDLER ----------------
-async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    data = load_db()
-    user = update.effective_user
-    text = update.message.text
+    # PDF
+    elif update.message.document:
+        file = await update.message.document.get_file()
+        path = f"{uid}_file"
+        await file.download_to_drive(path)
 
-    u = get_user(data, user.id, user.first_name)
+        if path.lower().endswith(".pdf"):
+            text = pdf_to_text(path)
+        else:
+            text = image_to_text(path)
 
-    # number = credit add
-    if text.isdigit():
-        u["credit"] += int(text)
-        save_db(data)
+    # AI PROCESS
+    prompt = build_prompt(text, bilingual=False)
+    ai_text = call_ai(prompt)
 
-        await update.message.reply_text(
-            f"✅ Credit Added!\n"
-            f"🆔 ID: {user.id}\n"
-            f"💰 Credit: {u['credit']}"
-        )
-    else:
-        await update.message.reply_text(
-            f"👤 {u['name']}\n"
-            f"🆔 {user.id}\n"
-            f"💰 Credit: {u['credit']}"
-        )
+    slides = [s.strip() for s in ai_text.split("\n\n") if s.strip()]
 
-# ---------------- MAIN ----------------
+    ppt_file = f"{uid}.pptx"
+    create_ppt(slides, ppt_file)
+
+    # CREDIT SYSTEM
+    data[uid]["credits"] -= len(slides)
+    data[uid]["history"].append({
+        "time": str(datetime.now()),
+        "slides": len(slides)
+    })
+    save_data(data)
+
+    await update.message.reply_document(InputFile(ppt_file))
+
+# =========================
+# 🚀 MAIN
+# =========================
 def main():
-    app = Application.builder().token(TOKEN).build()
+    app = Application.builder().token(BOT_TOKEN).build()
 
     app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("myinfo", myinfo))
-    app.add_handler(CommandHandler("add", add))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle))
+    app.add_handler(CommandHandler("objective", objective))
+    app.add_handler(CommandHandler("objective2", objective2))
+    app.add_handler(CommandHandler("background", background))
+    app.add_handler(CommandHandler("dbackground", dbackground))
+    app.add_handler(CommandHandler("admin", admin))
+
+    app.add_handler(MessageHandler(filters.TEXT | filters.PHOTO | filters.Document.ALL, handle))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, admin_auth))
 
     print("Bot running...")
     app.run_polling()
