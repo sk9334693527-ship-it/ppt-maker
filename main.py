@@ -1,108 +1,81 @@
+import json
 import os
-from datetime import datetime, timedelta
 from telegram import Update
-from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, ContextTypes, filters
-from supabase import create_client
+from telegram.ext import Application, CommandHandler, ContextTypes
 
-# ---------------- ENV ----------------
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 
-SUPABASE_URL = os.getenv("SUPABASE_URL")
-SUPABASE_KEY = os.getenv("SUPABASE_KEY")
+DATA_FILE = "data.json"
 
-ADMIN_ID = int(os.getenv("ADMIN_ID"))
-ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD")
+# ---------------- DATA FUNCTIONS ----------------
 
-if not SUPABASE_URL or not SUPABASE_KEY:
-    print("❌ Supabase ENV missing")
-    exit()
+def load_data():
+    if os.path.exists(DATA_FILE):
+        with open(DATA_FILE, "r") as f:
+            return json.load(f)
+    return {}
 
-supabase = create_client(SUPABASE_URL, SUPABASE_KEY.strip())
+def save_data(data):
+    with open(DATA_FILE, "w") as f:
+        json.dump(data, f, indent=4)
 
-admin_logged_in = set()
+data = load_data()
 
+def ensure_user(user):
+    uid = str(user.id)
 
-# ---------------- START ----------------
+    if uid not in data:
+        data[uid] = {
+            "name": user.full_name,
+            "credit": 0
+        }
+        save_data(data)
+
+# ---------------- COMMANDS ----------------
+
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
-
-    res = supabase.table("users").select("*").eq("user_id", str(user.id)).execute()
-
-    if not res.data:
-        supabase.table("users").insert({
-            "user_id": str(user.id),
-            "name": user.full_name,
-            "credit": 0,
-            "expiry": None
-        }).execute()
-        credit = 0
-    else:
-        credit = res.data[0]["credit"]
+    ensure_user(user)
 
     await update.message.reply_text(
-        f"👋 Welcome {user.full_name}\n💳 Credit: {credit}"
+        f"👋 Welcome {user.full_name}\nUse /balance to check credit"
     )
 
+async def balance(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
+    ensure_user(user)
 
-# ---------------- ADMIN ----------------
-async def admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("🔐 Send admin password")
+    uid = str(user.id)
+    credit = data[uid]["credit"]
 
+    await update.message.reply_text(
+        f"👤 Name: {data[uid]['name']}\n💰 Credit: {credit}"
+    )
 
-# ---------------- MESSAGE HANDLER ----------------
-async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    text = update.message.text
-    user_id = update.effective_user.id
+# ADMIN ADD CREDIT
+async def add(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # format: /add user_id amount
+    try:
+        user_id = context.args[0]
+        amount = int(context.args[1])
 
-    # ADMIN LOGIN
-    if text == ADMIN_PASSWORD and user_id == ADMIN_ID:
-        admin_logged_in.add(user_id)
-        await update.message.reply_text("✅ Admin Login Successful")
-        return
+        if user_id not in data:
+            data[user_id] = {"name": "Unknown", "credit": 0}
 
-    # ADMIN COMMAND
-    if text.startswith("/add") and user_id in admin_logged_in:
-        try:
-            _, target_id, mode, value = text.split()
+        data[user_id]["credit"] += amount
+        save_data(data)
 
-            res = supabase.table("users").select("*").eq("user_id", target_id).execute()
+        await update.message.reply_text("✅ Credit Added!")
 
-            if not res.data:
-                await update.message.reply_text("❌ User not found")
-                return
-
-            user = res.data[0]
-
-            # CREDIT ADD
-            if mode == "credit":
-                new_credit = int(user["credit"]) + int(value)
-
-                supabase.table("users").update({
-                    "credit": new_credit
-                }).eq("user_id", target_id).execute()
-
-                await update.message.reply_text(f"💰 Credit Added: {value}")
-
-            # DAYS ADD
-            elif mode == "day":
-                days = int(value)
-                expiry = datetime.utcnow() + timedelta(days=days)
-
-                supabase.table("users").update({
-                    "expiry": expiry.isoformat()
-                }).eq("user_id", target_id).execute()
-
-                await update.message.reply_text(f"⏳ Days Added: {days}")
-
-        except Exception as e:
-            await update.message.reply_text(f"Error: {e}")
-
+    except:
+        await update.message.reply_text("Usage: /add user_id amount")
 
 # ---------------- APP ----------------
-app = ApplicationBuilder().token(BOT_TOKEN).build()
+
+app = Application.builder().token(BOT_TOKEN).build()
 
 app.add_handler(CommandHandler("start", start))
-app.add_handler(CommandHandler("admin", admin))
-app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle))
+app.add_handler(CommandHandler("balance", balance))
+app.add_handler(CommandHandler("add", add))
 
 app.run_polling()
