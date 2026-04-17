@@ -16,25 +16,27 @@ from pptx import Presentation
 from pptx.util import Pt
 
 # =========================
+# 🔐 ADMIN STATES
+# =========================
+admin_waiting = set()
+admin_logged = set()
+
+# =========================
 # 🔐 CONFIG
 # =========================
 BOT_TOKEN = os.getenv("BOT_TOKEN")
-
-ADMIN_ID = 123456789
-PASSWORD = "YOUR_PASSWORD"
+ADMIN_ID = 123456789  # 🔥 apna Telegram ID daalo
+PASSWORD = os.getenv("PASSWORD")
 NUMBER = os.getenv("NUMBER")
 
 GEMINI_API_KEYS = [
-    "GEMINI1_API",
-    "GEMINI2_API",
-    "GEMINI3_API"
+    os.getenv("GEMINI_API"),
+    os.getenv("GEMINI1_API"),
+    os.getenv("GEMINI2_API"),
+    os.getenv("GEMINI3_API")
 ]
 
 DATA_FILE = "data.json"
-
-# OCR PATH (Windows only)
-# Linux/Render/Railway users: install tesseract
-pytesseract.pytesseract.tesseract_cmd = r"C:\Program Files\Tesseract-OCR\tesseract.exe"
 
 # =========================
 # 💾 DATA SYSTEM
@@ -66,7 +68,8 @@ def init_user(user):
 # 🤖 GEMINI AI
 # =========================
 def get_model():
-    key = random.choice(GEMINI_API_KEYS)
+    keys = [k for k in GEMINI_API_KEYS if k]
+    key = random.choice(keys)
     genai.configure(api_key=key)
     return genai.GenerativeModel("gemini-2.5-flash")
 
@@ -75,19 +78,18 @@ def call_ai(prompt):
         model = get_model()
         res = model.generate_content(prompt)
         return res.text
-    except:
+    except Exception as e:
         return "AI ERROR"
 
 # =========================
-# 📄 IMAGE OCR (FIXED - NO CV2)
+# 📄 OCR
 # =========================
 def image_to_text(path):
     img = Image.open(path)
-    text = pytesseract.image_to_string(img)
-    return text
+    return pytesseract.image_to_string(img)
 
 # =========================
-# 📄 PDF TO TEXT
+# 📄 PDF
 # =========================
 def pdf_to_text(path):
     text = ""
@@ -99,50 +101,30 @@ def pdf_to_text(path):
     return text
 
 # =========================
-# 🧠 AI PROMPT ENGINE
+# 🧠 PROMPT
 # =========================
 def build_prompt(text, bilingual=False):
     if bilingual:
         return f"""
 Convert into MCQ PPT format.
 
-RULES:
-- Hindi + English both
-- One question per slide
-- Format:
+Hindi + English
+One question per slide
 
-Q:
-Hindi line
-English line
-A)
-B)
-C)
-D)
-
-TEXT:
 {text}
 """
     else:
         return f"""
 Convert into MCQ PPT format.
 
-RULES:
-- Only English
-- One question per slide
-- Format:
+English only
+One question per slide
 
-Q:
-A)
-B)
-C)
-D)
-
-TEXT:
 {text}
 """
 
 # =========================
-# 🎞 PPT GENERATOR
+# 🎞 PPT
 # =========================
 def create_ppt(slides, filename):
     prs = Presentation()
@@ -186,70 +168,104 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 """)
 
 # =========================
-# OBJECTIVE MODE
+# COMMANDS
 # =========================
 async def objective(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("📥 Send text / image / PDF → English MCQ PPT")
+    await update.message.reply_text("Send text/image/pdf")
 
 async def objective2(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("📥 Send → Hindi + English MCQ PPT")
+    await update.message.reply_text("Send bilingual input")
 
-# =========================
-# BACKGROUND
-# =========================
 async def background(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("📤 Send background PPT file")
+    await update.message.reply_text("Send background ppt")
 
 async def dbackground(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = str(update.message.from_user.id)
     data[uid]["background"] = False
     save_data(data)
-    await update.message.reply_text("❌ Background removed")
+    await update.message.reply_text("Background removed")
 
-# =========================
-# ADMIN
-# =========================
 async def admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("🔐 Send password:")
-
-async def admin_auth(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.message.text == PASSWORD and update.message.from_user.id == ADMIN_ID:
-        await update.message.reply_text("""
-✅ ADMIN PANEL:
-/add
-/user
-/history
-/credit
-""")
-    else:
-        await update.message.reply_text("❌ Not allowed")
+    uid = update.message.from_user.id
+    admin_waiting.add(uid)
+    await update.message.reply_text("Send password")
 
 # =========================
-# 🧠 MAIN ENGINE (FULL AI FLOW)
+# MAIN HANDLE
 # =========================
 async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.message.from_user
+    uid = user.id
     init_user(user)
-    uid = str(user.id)
 
-    if data[uid]["credits"] <= 0:
-        await update.message.reply_text("❌ No credits left")
+    # 🔐 ADMIN PASSWORD
+    if uid in admin_waiting:
+        if update.message.text == PASSWORD and uid == ADMIN_ID:
+            admin_waiting.remove(uid)
+            admin_logged.add(uid)
+            await update.message.reply_text("Admin Panel\n/add /user /history /credit")
+        else:
+            admin_waiting.remove(uid)
+            await update.message.reply_text("Wrong password")
         return
 
+    # ⚙️ ADMIN COMMANDS
+    if uid in admin_logged and update.message.text:
+        text = update.message.text
+
+        if text.startswith("/add"):
+            try:
+                _, u, c = text.split()
+                u = str(u)
+                c = int(c)
+
+                if u not in data:
+                    data[u] = {"name": "User", "credits": 0, "history": []}
+
+                data[u]["credits"] += c
+                save_data(data)
+                await update.message.reply_text("Credit added")
+            except:
+                await update.message.reply_text("Use: /add user_id credits")
+            return
+
+        if text == "/user":
+            msg = "\n".join([f"{u} - {data[u]['name']}" for u in data])
+            await update.message.reply_text(msg)
+            return
+
+        if text == "/history":
+            total = sum(len(data[u]["history"]) for u in data)
+            await update.message.reply_text(f"Total usage: {total}")
+            return
+
+        if text.startswith("/credit"):
+            try:
+                _, u = text.split()
+                c = data.get(u, {}).get("credits", 0)
+                await update.message.reply_text(f"Credits: {c}")
+            except:
+                await update.message.reply_text("Use: /credit user_id")
+            return
+
+    # 🚫 CREDIT CHECK
+    uid_str = str(uid)
+    if data[uid_str]["credits"] <= 0:
+        await update.message.reply_text("No credits")
+        return
+
+    # 📥 INPUT
     text = ""
 
-    # TEXT
     if update.message.text:
         text = update.message.text
 
-    # IMAGE
     elif update.message.photo:
         file = await update.message.photo[-1].get_file()
         path = f"{uid}.jpg"
         await file.download_to_drive(path)
         text = image_to_text(path)
 
-    # PDF / FILE
     elif update.message.document:
         file = await update.message.document.get_file()
         path = f"{uid}_file"
@@ -260,24 +276,24 @@ async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
         else:
             text = image_to_text(path)
 
-    # AI PROCESS
-    prompt = build_prompt(text, bilingual=False)
+    # 🤖 AI
+    prompt = build_prompt(text)
     ai_text = call_ai(prompt)
 
     slides = [s.strip() for s in ai_text.split("\n\n") if s.strip()]
 
-    ppt_file = f"{uid}.pptx"
-    create_ppt(slides, ppt_file)
+    ppt = f"{uid}.pptx"
+    create_ppt(slides, ppt)
 
-    # CREDIT SYSTEM
-    data[uid]["credits"] -= len(slides)
-    data[uid]["history"].append({
+    # 💳 CREDIT UPDATE
+    data[uid_str]["credits"] -= len(slides)
+    data[uid_str]["history"].append({
         "time": str(datetime.now()),
         "slides": len(slides)
     })
     save_data(data)
 
-    await update.message.reply_document(InputFile(ppt_file))
+    await update.message.reply_document(InputFile(ppt))
 
 # =========================
 # 🚀 MAIN
@@ -293,7 +309,6 @@ def main():
     app.add_handler(CommandHandler("admin", admin))
 
     app.add_handler(MessageHandler(filters.ALL, handle))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, admin_auth))
 
     print("Bot running...")
     app.run_polling()
