@@ -18,7 +18,7 @@ from pptx.util import Pt
 # =========================
 # 🔐 CONFIG
 # =========================
-BOT_TOKEN = "BOT_TOKEN"
+BOT_TOKEN = "123456789:AAHkjsd98sdf98sdf98sdf9sdf"
 
 ADMIN_ID = 123456789
 PASSWORD = "YOUR_PASSWORD"
