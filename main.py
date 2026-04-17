@@ -1,13 +1,16 @@
-import json
 import os
+import json
 from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
 
-TOKEN = "YOUR_BOT_TOKEN"
+# ---------------- TOKEN (Railway ENV) ----------------
+TOKEN = os.getenv("BOT_TOKEN")
 
+if not TOKEN:
+    raise Exception("❌ BOT_TOKEN missing in Railway Variables")
+
+# ---------------- LOCAL DATABASE ----------------
 DB_FILE = "data.json"
-
-# ---------------- DB FUNCTIONS ----------------
 
 def load_db():
     if not os.path.exists(DB_FILE):
@@ -28,8 +31,7 @@ def get_user(data, user_id, name):
         }
     return data[user_id]
 
-# ---------------- COMMANDS ----------------
-
+# ---------------- START COMMAND ----------------
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     data = load_db()
     user = update.effective_user
@@ -38,11 +40,12 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     save_db(data)
 
     await update.message.reply_text(
-        f"👋 Hello {u['name']}\n\n"
+        f"👋 Welcome {u['name']}\n\n"
         f"🆔 ID: {user.id}\n"
         f"💰 Credit: {u['credit']}"
     )
 
+# ---------------- INFO COMMAND ----------------
 async def myinfo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     data = load_db()
     user = update.effective_user
@@ -51,14 +54,13 @@ async def myinfo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     save_db(data)
 
     await update.message.reply_text(
-        f"🧾 USER INFO\n\n"
+        f"📊 USER INFO\n\n"
         f"👤 Name: {u['name']}\n"
         f"🆔 ID: {user.id}\n"
         f"💰 Credit: {u['credit']}"
     )
 
-# ---------------- ADD CREDIT (ADMIN TEST) ----------------
-
+# ---------------- ADD CREDIT (ADMIN) ----------------
 async def add(update: Update, context: ContextTypes.DEFAULT_TYPE):
     data = load_db()
 
@@ -66,7 +68,7 @@ async def add(update: Update, context: ContextTypes.DEFAULT_TYPE):
         target_id = context.args[0]
         amount = int(context.args[1])
     except:
-        await update.message.reply_text("Usage: /add user_id amount")
+        await update.message.reply_text("❌ Use: /add user_id amount")
         return
 
     if target_id not in data:
@@ -76,12 +78,12 @@ async def add(update: Update, context: ContextTypes.DEFAULT_TYPE):
     save_db(data)
 
     await update.message.reply_text(
-        f"✅ Added {amount} credit to {target_id}\n"
-        f"💰 New Balance: {data[target_id]['credit']}"
+        f"✅ Added {amount} credit\n"
+        f"🆔 User: {target_id}\n"
+        f"💰 Total: {data[target_id]['credit']}"
     )
 
 # ---------------- MESSAGE HANDLER ----------------
-
 async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
     data = load_db()
     user = update.effective_user
@@ -89,13 +91,13 @@ async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     u = get_user(data, user.id, user.first_name)
 
-    # Example: if user sends number → add credit
+    # number = credit add
     if text.isdigit():
         u["credit"] += int(text)
         save_db(data)
 
         await update.message.reply_text(
-            f"✅ Credit Added!\n\n"
+            f"✅ Credit Added!\n"
             f"🆔 ID: {user.id}\n"
             f"💰 Credit: {u['credit']}"
         )
@@ -107,7 +109,6 @@ async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
 # ---------------- MAIN ----------------
-
 def main():
     app = Application.builder().token(TOKEN).build()
 
