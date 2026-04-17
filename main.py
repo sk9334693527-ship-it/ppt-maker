@@ -22,24 +22,24 @@ admin_waiting = set()
 admin_logged = set()
 
 # =========================
-# 🔐 CONFIG
+# 🔐 CONFIG (FIXED)
 # =========================
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 
-ADMIN_ID = 123456789  # 🔥 apna Telegram user ID daalo
+ADMIN_ID = int(os.getenv("ADMIN_ID", "0"))   # 👈 env se lo
 
-# ✅ PASSWORD FIX (FINAL)
+# 🔥 PASSWORD FIX (MOST IMPORTANT)
 PASSWORD = os.getenv("PASSWORD")
-if not PASSWORD:
-    PASSWORD = "1234"   # fallback
+if PASSWORD is None:
+    PASSWORD = "1234"   # fallback (test ke liye)
+
 PASSWORD = str(PASSWORD).strip()
 
-NUMBER = os.getenv("NUMBER")
+NUMBER = os.getenv("NUMBER", "Not Set")
 
 GEMINI_API_KEYS = [
     os.getenv("GEMINI_API"),
     os.getenv("GEMINI1_API"),
-    os.getenv("GEMINI2_API"),
     os.getenv("GEMINI2_API"),
     os.getenv("GEMINI3_API")
 ]
@@ -77,6 +77,9 @@ def init_user(user):
 # =========================
 def get_model():
     keys = [k for k in GEMINI_API_KEYS if k]
+    if not keys:
+        raise Exception("No Gemini API found")
+
     key = random.choice(keys)
     genai.configure(api_key=key)
     return genai.GenerativeModel("gemini-2.5-flash")
@@ -86,7 +89,8 @@ def call_ai(prompt):
         model = get_model()
         res = model.generate_content(prompt)
         return res.text
-    except:
+    except Exception as e:
+        print("AI ERROR:", e)
         return "AI ERROR"
 
 # =========================
@@ -179,9 +183,11 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # COMMANDS
 # =========================
 async def objective(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    context.user_data["mode"] = "objective"
     await update.message.reply_text("Send text/image/pdf")
 
 async def objective2(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    context.user_data["mode"] = "objective2"
     await update.message.reply_text("Send bilingual input")
 
 async def background(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -199,20 +205,21 @@ async def admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("🔐 Send password")
 
 # =========================
-# MAIN HANDLE
+# MAIN HANDLE (FIXED)
 # =========================
 async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.message.from_user
     uid = user.id
     init_user(user)
 
-    # 🔍 DEBUG (temporary dekhne ke liye)
-    print("ENV PASSWORD:", PASSWORD)
-    print("USER INPUT:", update.message.text)
+    text_msg = update.message.text.strip() if update.message.text else ""
 
-    # 🔐 ADMIN PASSWORD
+    # 🔥 ADMIN LOGIN FIX
     if uid in admin_waiting:
-        if update.message.text and update.message.text.strip() == PASSWORD and uid == ADMIN_ID:
+        print("INPUT PASSWORD:", text_msg)
+        print("REAL PASSWORD:", PASSWORD)
+
+        if text_msg == PASSWORD and uid == ADMIN_ID:
             admin_waiting.remove(uid)
             admin_logged.add(uid)
 
@@ -230,13 +237,11 @@ async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         return
 
-    # ⚙️ ADMIN COMMANDS
-    if uid in admin_logged and update.message.text:
-        text = update.message.text
-
-        if text.startswith("/add"):
+    # 🔥 ADMIN COMMANDS
+    if uid in admin_logged and text_msg:
+        if text_msg.startswith("/add"):
             try:
-                _, u, c = text.split()
+                _, u, c = text_msg.split()
                 u = str(u)
                 c = int(c)
 
@@ -245,35 +250,15 @@ async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
                 data[u]["credits"] += c
                 save_data(data)
-
                 await update.message.reply_text("✅ Credit added")
             except:
-                await update.message.reply_text("❌ Use: /add user_id credits")
-            return
-
-        if text == "/user":
-            msg = "\n".join([f"{u} - {data[u]['name']}" for u in data])
-            await update.message.reply_text(msg or "No users")
-            return
-
-        if text == "/history":
-            total = sum(len(data[u]["history"]) for u in data)
-            await update.message.reply_text(f"Total usage: {total}")
-            return
-
-        if text.startswith("/credit"):
-            try:
-                _, u = text.split()
-                c = data.get(u, {}).get("credits", 0)
-                await update.message.reply_text(f"Credits: {c}")
-            except:
-                await update.message.reply_text("❌ Use: /credit user_id")
+                await update.message.reply_text("Use: /add user_id credits")
             return
 
     # 🚫 CREDIT CHECK
     uid_str = str(uid)
     if data[uid_str]["credits"] <= 0:
-        await update.message.reply_text("❌ No credits")
+        await update.message.reply_text("No credits")
         return
 
     # 📥 INPUT
@@ -299,7 +284,9 @@ async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
             text = image_to_text(path)
 
     # 🤖 AI
-    prompt = build_prompt(text)
+    mode = context.user_data.get("mode", "objective")
+    prompt = build_prompt(text, bilingual=(mode == "objective2"))
+
     ai_text = call_ai(prompt)
 
     slides = [s.strip() for s in ai_text.split("\n\n") if s.strip()]
