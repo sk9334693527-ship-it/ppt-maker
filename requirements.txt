@@ -1,9 +1,7 @@
 python-telegram-bot==20.7
 python-pptx
 pillow
-requests
-pytesseract
 pdfplumber
+pytesseract
 google-generativeai
-opencv-python
-numpy
+requests
