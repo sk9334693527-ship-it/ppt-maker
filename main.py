@@ -1,47 +1,123 @@
 import json
 import os
 from telegram import Update
-from telegram.ext import Application, CommandHandler, ContextTypes
+from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
 
-BOT_TOKEN = os.getenv("BOT_TOKEN")
+TOKEN = "YOUR_BOT_TOKEN"
 
-DATA_FILE = "data.json"
+DB_FILE = "data.json"
 
-def load_data():
-    if os.path.exists(DATA_FILE):
-        with open(DATA_FILE, "r") as f:
-            return json.load(f)
-    return {}
+# ---------------- DB FUNCTIONS ----------------
 
-def save_data(data):
-    with open(DATA_FILE, "w") as f:
+def load_db():
+    if not os.path.exists(DB_FILE):
+        return {}
+    with open(DB_FILE, "r") as f:
+        return json.load(f)
+
+def save_db(data):
+    with open(DB_FILE, "w") as f:
         json.dump(data, f, indent=4)
 
-data = load_data()
+def get_user(data, user_id, name):
+    user_id = str(user_id)
+    if user_id not in data:
+        data[user_id] = {
+            "name": name,
+            "credit": 0
+        }
+    return data[user_id]
 
-def ensure_user(user):
-    uid = str(user.id)
-    if uid not in data:
-        data[uid] = {"name": user.full_name, "credit": 0}
-        save_data(data)
+# ---------------- COMMANDS ----------------
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    ensure_user(update.effective_user)
-    await update.message.reply_text("Bot is working ✅")
-
-async def balance(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    data = load_db()
     user = update.effective_user
-    ensure_user(user)
 
-    uid = str(user.id)
+    u = get_user(data, user.id, user.first_name)
+    save_db(data)
+
     await update.message.reply_text(
-        f"Credit: {data[uid]['credit']}"
+        f"👋 Hello {u['name']}\n\n"
+        f"🆔 ID: {user.id}\n"
+        f"💰 Credit: {u['credit']}"
     )
 
-app = Application.builder().token(BOT_TOKEN).build()
+async def myinfo(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    data = load_db()
+    user = update.effective_user
 
-app.add_handler(CommandHandler("start", start))
-app.add_handler(CommandHandler("balance", balance))
+    u = get_user(data, user.id, user.first_name)
+    save_db(data)
 
-print("Bot started...")
-app.run_polling()
+    await update.message.reply_text(
+        f"🧾 USER INFO\n\n"
+        f"👤 Name: {u['name']}\n"
+        f"🆔 ID: {user.id}\n"
+        f"💰 Credit: {u['credit']}"
+    )
+
+# ---------------- ADD CREDIT (ADMIN TEST) ----------------
+
+async def add(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    data = load_db()
+
+    try:
+        target_id = context.args[0]
+        amount = int(context.args[1])
+    except:
+        await update.message.reply_text("Usage: /add user_id amount")
+        return
+
+    if target_id not in data:
+        data[target_id] = {"name": "User", "credit": 0}
+
+    data[target_id]["credit"] += amount
+    save_db(data)
+
+    await update.message.reply_text(
+        f"✅ Added {amount} credit to {target_id}\n"
+        f"💰 New Balance: {data[target_id]['credit']}"
+    )
+
+# ---------------- MESSAGE HANDLER ----------------
+
+async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    data = load_db()
+    user = update.effective_user
+    text = update.message.text
+
+    u = get_user(data, user.id, user.first_name)
+
+    # Example: if user sends number → add credit
+    if text.isdigit():
+        u["credit"] += int(text)
+        save_db(data)
+
+        await update.message.reply_text(
+            f"✅ Credit Added!\n\n"
+            f"🆔 ID: {user.id}\n"
+            f"💰 Credit: {u['credit']}"
+        )
+    else:
+        await update.message.reply_text(
+            f"👤 {u['name']}\n"
+            f"🆔 {user.id}\n"
+            f"💰 Credit: {u['credit']}"
+        )
+
+# ---------------- MAIN ----------------
+
+def main():
+    app = Application.builder().token(TOKEN).build()
+
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("myinfo", myinfo))
+    app.add_handler(CommandHandler("add", add))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle))
+
+    print("Bot running...")
+    app.run_polling()
+
+if __name__ == "__main__":
+    main()
