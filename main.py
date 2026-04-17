@@ -1,123 +1,129 @@
 import os
+import json
 import time
-import requests
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes, MessageHandler, filters
 
-# ===== ENV VARIABLES =====
 TOKEN = os.getenv("BOT_TOKEN")
 ADMIN_ID = int(os.getenv("ADMIN_ID"))
 ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD")
-WEB_URL = os.getenv("WEB_URL")  # Google Apps Script URL
+
+DATA_FILE = "data.json"
 
 admin_state = {}
 
-# ===== SAVE FUNCTION =====
-def save_user(user_id, name, credit, expiry):
-    data = {
-        "user_id": str(user_id),
-        "name": name,
-        "credit": credit,
-        "expiry": expiry
-    }
+# ===== LOAD DATA =====
+def load_data():
+    if not os.path.exists(DATA_FILE):
+        return {}
+    with open(DATA_FILE, "r") as f:
+        return json.load(f)
 
-    try:
-        r = requests.post(WEB_URL, json=data)
-        print("SHEET RESPONSE:", r.text)
-    except Exception as e:
-        print("ERROR:", e)
+# ===== SAVE DATA =====
+def save_data(data):
+    with open(DATA_FILE, "w") as f:
+        json.dump(data, f, indent=4)
+
 # ===== /start =====
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
+    data = load_data()
 
-    save_user(user.id, user.first_name, 0, 0)
+    if str(user.id) not in data:
+        data[str(user.id)] = {
+            "name": user.first_name,
+            "credit": 0,
+            "expiry": 0
+        }
+        save_data(data)
+
+    u = data[str(user.id)]
 
     await update.message.reply_text(
-        f"👋 Hello {user.first_name}\n"
+        f"👋 Hello {u['name']}\n"
         f"🆔 ID: {user.id}\n"
-        f"💰 Credit: 0\n"
-        f"⏳ Days: 0"
+        f"💰 Credit: {u['credit']}\n"
+        f"⏳ Days Left: {int((u['expiry'] - time.time())/86400) if u['expiry'] else 0}"
     )
 
 # ===== /admin =====
 async def admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-
-    if user_id != ADMIN_ID:
+    if update.effective_user.id != ADMIN_ID:
         await update.message.reply_text("❌ Not allowed")
         return
 
-    admin_state[user_id] = "password"
-    await update.message.reply_text("🔐 Enter Admin Password:")
+    admin_state[update.effective_user.id] = "password"
+    await update.message.reply_text("🔐 Enter password:")
 
 # ===== /add =====
 async def add(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-
-    if admin_state.get(user_id) != "logged_in":
-        await update.message.reply_text("❌ Login first using /admin")
+    if update.effective_user.id != ADMIN_ID:
         return
 
-    admin_state[user_id] = "ask_user"
-    await update.message.reply_text("Enter User ID:")
+    if admin_state.get(update.effective_user.id) != "logged":
+        await update.message.reply_text("Login first /admin")
+        return
+
+    admin_state[update.effective_user.id] = "ask_user"
+    await update.message.reply_text("Enter user ID:")
 
 # ===== MESSAGE HANDLER =====
-async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
+async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    uid = update.effective_user.id
     text = update.message.text
 
-    # LOGIN PASSWORD
-    if admin_state.get(user_id) == "password":
-        if text == ADMIN_PASSWORD:
-            admin_state[user_id] = "logged_in"
-            await update.message.reply_text("✅ Welcome Admin")
-        else:
-            await update.message.reply_text("❌ Wrong Password")
+    data = load_data()
 
-    # ASK USER ID
-    elif admin_state.get(user_id) == "ask_user":
-        admin_state[user_id] = {"step": "choose", "target": text}
+    # LOGIN
+    if admin_state.get(uid) == "password":
+        if text == ADMIN_PASSWORD:
+            admin_state[uid] = "logged"
+            await update.message.reply_text("✅ Admin logged in")
+        else:
+            await update.message.reply_text("❌ Wrong password")
+
+    # ASK USER
+    elif admin_state.get(uid) == "ask_user":
+        admin_state[uid] = {"step": "choose", "target": text}
         await update.message.reply_text("Type: credit or day")
 
     # CHOOSE TYPE
-    elif isinstance(admin_state.get(user_id), dict) and admin_state[user_id]["step"] == "choose":
-        if text.lower() == "credit":
-            admin_state[user_id]["step"] = "credit_add"
-            await update.message.reply_text("Enter credit amount:")
+    elif isinstance(admin_state.get(uid), dict):
 
-        elif text.lower() == "day":
-            admin_state[user_id]["step"] = "day_add"
-            await update.message.reply_text("Enter days:")
+        state = admin_state[uid]
 
-    # ADD CREDIT
-    elif isinstance(admin_state.get(user_id), dict) and admin_state[user_id]["step"] == "credit_add":
-        amount = int(text)
-        target = admin_state[user_id]["target"]
+        if state["step"] == "choose":
+            if text == "credit":
+                state["step"] = "credit_add"
+                await update.message.reply_text("Enter credit amount")
 
-        save_user(target, "User", amount, 0)
+            elif text == "day":
+                state["step"] = "day_add"
+                await update.message.reply_text("Enter days")
 
-        admin_state[user_id] = "logged_in"
-        await update.message.reply_text(f"✅ {amount} credit added")
+        elif state["step"] == "credit_add":
+            target = state["target"]
+            data[target]["credit"] += int(text)
+            save_data(data)
 
-    # ADD DAYS
-    elif isinstance(admin_state.get(user_id), dict) and admin_state[user_id]["step"] == "day_add":
-        days = int(text)
-        target = admin_state[user_id]["target"]
+            admin_state[uid] = "logged"
+            await update.message.reply_text("✅ Credit added")
 
-        expiry = int(time.time()) + (days * 86400)
+        elif state["step"] == "day_add":
+            target = state["target"]
+            data[target]["expiry"] = time.time() + (int(text)*86400)
+            save_data(data)
 
-        save_user(target, "User", 0, expiry)
+            admin_state[uid] = "logged"
+            await update.message.reply_text("✅ Days added")
 
-        admin_state[user_id] = "logged_in"
-        await update.message.reply_text(f"✅ {days} days added")
-
-# ===== APP START =====
+# ===== APP =====
 app = ApplicationBuilder().token(TOKEN).build()
 
 app.add_handler(CommandHandler("start", start))
 app.add_handler(CommandHandler("admin", admin))
 app.add_handler(CommandHandler("add", add))
-app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle))
 
 print("Bot running...")
 app.run_polling()
