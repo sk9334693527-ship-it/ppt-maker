@@ -26,7 +26,7 @@ admin_logged = set()
 # =========================
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 ADMIN_ID = 123456789  # 🔥 apna Telegram ID daalo
-PASSWORD = os.getenv("PASSWORD")
+PASSWORD = str(os.getenv("PASSWORD")).strip()
 NUMBER = os.getenv("NUMBER")
 
 GEMINI_API_KEYS = [
@@ -200,7 +200,7 @@ async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # 🔐 ADMIN PASSWORD
     if uid in admin_waiting:
-        if update.message.text == PASSWORD and uid == ADMIN_ID:
+        if update.message.text.strip() == PASSWORD and uid == ADMIN_ID:
             admin_waiting.remove(uid)
             admin_logged.add(uid)
             await update.message.reply_text("Admin Panel\n/add /user /history /credit")
