@@ -1,16 +1,16 @@
 import json
 import os
 from telegram import Update
-from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, ContextTypes
+from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, ContextTypes, filters
 
-# ====== ENV ======
+# ================= ENV =================
 TOKEN = os.getenv("BOT_TOKEN")
-ADMIN_ID = int(os.getenv("ADMIN_ID", "0"))
+ADMIN_ID = str(os.getenv("ADMIN_ID", "0"))
 ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "1234")
 
 DATA_FILE = "data.json"
 
-# ====== DATA ======
+# ================= DATA =================
 def load_data():
     if not os.path.exists(DATA_FILE):
         return {}
@@ -23,104 +23,109 @@ def save_data(data):
 
 data = load_data()
 
-# ====== ADMIN SESSION ======
-admin_state = {}
+# ================= STATE =================
+state = {}
 
-# ====== START ======
+# ================= START =================
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     uid = str(user.id)
 
     if uid not in data:
         data[uid] = {
+            "name": user.first_name,
+            "username": user.username or "",
             "credit": 0,
-            "days": 0,
-            "name": user.first_name
+            "days": 0
         }
         save_data(data)
 
     u = data[uid]
 
     await update.message.reply_text(
-        f"👋 Welcome {user.first_name}\n\n"
+        f"👋 Welcome {u['name']}\n"
+        f"🆔 ID: {uid}\n"
+        f"🔰 Username: @{u['username']}\n\n"
         f"💰 Credit: {u['credit']}\n"
         f"📅 Days: {u['days']}"
     )
 
-# ====== ADMIN ======
+# ================= ADMIN =================
 async def admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = str(update.effective_user.id)
-
+    state[uid] = "password"
     await update.message.reply_text("🔐 Enter Admin Password:")
-    admin_state[uid] = "waiting_password"
 
-# ====== MESSAGE HANDLER ======
+# ================= ADD COMMAND =================
+async def add(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    uid = str(update.effective_user.id)
+
+    if uid != ADMIN_ID:
+        await update.message.reply_text("❌ Not allowed")
+        return
+
+    state[uid] = "target"
+    await update.message.reply_text("👤 User ID bhejo jisko update karna hai")
+
+# ================= MESSAGE HANDLER =================
 async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = str(update.effective_user.id)
     text = update.message.text
 
-    # ===== ADMIN LOGIN =====
-    if uid in admin_state and admin_state[uid] == "waiting_password":
+    # ---------- ADMIN LOGIN ----------
+    if uid in state and state[uid] == "password":
         if text == ADMIN_PASSWORD:
-            admin_state[uid] = "logged_in"
+            state[uid] = "logged"
             await update.message.reply_text("✅ Welcome Admin\n\nUse /add")
         else:
             await update.message.reply_text("❌ Wrong password")
+            state.pop(uid, None)
         return
 
-    # ===== ADD COMMAND FLOW =====
-    if uid in admin_state and admin_state[uid] == "add_target":
-        admin_state[uid] = {"step": "type", "target": text}
+    # ---------- TARGET USER ----------
+    if uid in state and state[uid] == "target":
+        state[uid] = {"step": "type", "target": text}
         await update.message.reply_text("👉 Type: credit or day")
         return
 
-    if isinstance(admin_state.get(uid), dict):
-        state = admin_state[uid]
+    # ---------- ADD FLOW ----------
+    if isinstance(state.get(uid), dict):
+        s = state[uid]
 
-        # TYPE SELECT
-        if state["step"] == "type":
-            if text.lower() == "credit":
-                state["mode"] = "credit"
-                state["step"] = "amount"
-                await update.message.reply_text("💰 Kitna credit add karna hai?")
-                return
+        if s["step"] == "type":
+            if text.lower() in ["credit", "day"]:
+                s["mode"] = text.lower()
+                s["step"] = "amount"
+                await update.message.reply_text("💰 Kitna add karna hai?")
+            else:
+                await update.message.reply_text("❌ type only: credit or day")
+            return
 
-            if text.lower() == "day":
-                state["mode"] = "day"
-                state["step"] = "amount"
-                await update.message.reply_text("📅 Kitne din add karna hai?")
-                return
-
-        # AMOUNT
-        if state["step"] == "amount":
-            target = state["target"]
+        if s["step"] == "amount":
+            target = s["target"]
 
             if target not in data:
-                data[target] = {"credit": 0, "days": 0, "name": "user"}
+                data[target] = {
+                    "name": "user",
+                    "username": "",
+                    "credit": 0,
+                    "days": 0
+                }
 
-            if state["mode"] == "credit":
+            # update logic
+            if s["mode"] == "credit":
                 data[target]["credit"] += int(text)
             else:
                 data[target]["days"] += int(text)
 
             save_data(data)
-            admin_state[uid] = "logged_in"
 
-            await update.message.reply_text("✅ Updated Successfully")
+            state.pop(uid, None)
+
+            await update.message.reply_text("✅ Successfully Updated")
             return
 
-# ===== /ADD =====
-async def add(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    uid = str(update.effective_user.id)
-
-    if uid != str(ADMIN_ID):
-        await update.message.reply_text("❌ Not allowed")
-        return
-
-    await update.message.reply_text("👤 User ID bhejo jisko add karna hai")
-    admin_state[uid] = "add_target"
-
-# ===== APP =====
+# ================= APP =================
 app = ApplicationBuilder().token(TOKEN).build()
 
 app.add_handler(CommandHandler("start", start))
