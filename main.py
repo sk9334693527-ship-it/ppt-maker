@@ -25,13 +25,21 @@ admin_logged = set()
 # 🔐 CONFIG
 # =========================
 BOT_TOKEN = os.getenv("BOT_TOKEN")
-ADMIN_ID = 123456789  # 🔥 apna Telegram ID daalo
-PASSWORD = str(os.getenv("PASSWORD")).strip()
+
+ADMIN_ID = 123456789  # 🔥 apna Telegram user ID daalo
+
+# ✅ PASSWORD FIX (FINAL)
+PASSWORD = os.getenv("PASSWORD")
+if not PASSWORD:
+    PASSWORD = "1234"   # fallback
+PASSWORD = str(PASSWORD).strip()
+
 NUMBER = os.getenv("NUMBER")
 
 GEMINI_API_KEYS = [
     os.getenv("GEMINI_API"),
     os.getenv("GEMINI1_API"),
+    os.getenv("GEMINI2_API"),
     os.getenv("GEMINI2_API"),
     os.getenv("GEMINI3_API")
 ]
@@ -78,7 +86,7 @@ def call_ai(prompt):
         model = get_model()
         res = model.generate_content(prompt)
         return res.text
-    except Exception as e:
+    except:
         return "AI ERROR"
 
 # =========================
@@ -188,7 +196,7 @@ async def dbackground(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.message.from_user.id
     admin_waiting.add(uid)
-    await update.message.reply_text("Send password")
+    await update.message.reply_text("🔐 Send password")
 
 # =========================
 # MAIN HANDLE
@@ -198,15 +206,28 @@ async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = user.id
     init_user(user)
 
+    # 🔍 DEBUG (temporary dekhne ke liye)
+    print("ENV PASSWORD:", PASSWORD)
+    print("USER INPUT:", update.message.text)
+
     # 🔐 ADMIN PASSWORD
     if uid in admin_waiting:
-        if update.message.text.strip() == PASSWORD and uid == ADMIN_ID:
+        if update.message.text and update.message.text.strip() == PASSWORD and uid == ADMIN_ID:
             admin_waiting.remove(uid)
             admin_logged.add(uid)
-            await update.message.reply_text("Admin Panel\n/add /user /history /credit")
+
+            await update.message.reply_text("""
+✅ ADMIN PANEL
+
+/add user_id credits
+/user
+/history
+/credit user_id
+""")
         else:
             admin_waiting.remove(uid)
-            await update.message.reply_text("Wrong password")
+            await update.message.reply_text("❌ Wrong password")
+
         return
 
     # ⚙️ ADMIN COMMANDS
@@ -224,14 +245,15 @@ async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
                 data[u]["credits"] += c
                 save_data(data)
-                await update.message.reply_text("Credit added")
+
+                await update.message.reply_text("✅ Credit added")
             except:
-                await update.message.reply_text("Use: /add user_id credits")
+                await update.message.reply_text("❌ Use: /add user_id credits")
             return
 
         if text == "/user":
             msg = "\n".join([f"{u} - {data[u]['name']}" for u in data])
-            await update.message.reply_text(msg)
+            await update.message.reply_text(msg or "No users")
             return
 
         if text == "/history":
@@ -245,13 +267,13 @@ async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 c = data.get(u, {}).get("credits", 0)
                 await update.message.reply_text(f"Credits: {c}")
             except:
-                await update.message.reply_text("Use: /credit user_id")
+                await update.message.reply_text("❌ Use: /credit user_id")
             return
 
     # 🚫 CREDIT CHECK
     uid_str = str(uid)
     if data[uid_str]["credits"] <= 0:
-        await update.message.reply_text("No credits")
+        await update.message.reply_text("❌ No credits")
         return
 
     # 📥 INPUT
