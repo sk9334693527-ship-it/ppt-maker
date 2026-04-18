@@ -22,7 +22,7 @@ admin_waiting = set()
 admin_logged = set()
 
 # =========================
-# 🔐 CONFIG (FIXED)
+# 🔐 CONFIG
 # =========================
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 
@@ -179,7 +179,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 """)
 
 # =========================
-# COMMANDS (FIXED)
+# COMMANDS
 # =========================
 async def objective(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["mode"] = "objective"
@@ -212,7 +212,7 @@ async def admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("🔐 Send password")
 
 # =========================
-# MAIN HANDLE (FIXED)
+# MAIN HANDLE
 # =========================
 async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.message.from_user
@@ -227,14 +227,7 @@ async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
             admin_waiting.remove(uid)
             admin_logged.add(uid)
 
-            await update.message.reply_text("""
-✅ ADMIN PANEL
-
-/add user_id credits
-/user
-/history
-/credit user_id
-""")
+            await update.message.reply_text("✅ ADMIN PANEL")
         else:
             admin_waiting.remove(uid)
             await update.message.reply_text("❌ Wrong password")
@@ -246,7 +239,7 @@ async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("No credits")
         return
 
-    # 📥 INPUT FIX
+    # INPUT
     text = ""
 
     if "pending_text" in context.user_data:
@@ -271,7 +264,7 @@ async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
         else:
             text = image_to_text(path)
 
-    # 🤖 AI
+    # AI
     mode = context.user_data.get("mode", "objective")
     prompt = build_prompt(text, bilingual=(mode == "objective2"))
 
@@ -279,7 +272,8 @@ async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     slides = [s.strip() for s in ai_text.split("\n\n") if s.strip()]
 
-    ppt = f"{uid}.pptx"
+    # 🔥 FIXED FILENAME
+    ppt = f"{uid}_{int(datetime.now().timestamp())}.pptx"
     create_ppt(slides, ppt)
 
     # CREDIT UPDATE
@@ -290,10 +284,13 @@ async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
     })
     save_data(data)
 
-    await update.message.reply_document(InputFile(ppt))
+    # 🔥 FINAL FIX (IMPORTANT)
+    await update.message.reply_document(
+        document=InputFile(ppt, filename=ppt)
+    )
 
 # =========================
-# 🚀 MAIN
+# MAIN
 # =========================
 def main():
     app = Application.builder().token(BOT_TOKEN).build()
