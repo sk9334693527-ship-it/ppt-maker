@@ -1,4 +1,5 @@
 import os
+import asyncio
 import google.generativeai as genai
 from pptx import Presentation
 from pptx.util import Inches, Pt
@@ -7,144 +8,96 @@ from pptx.dml.color import RGBColor
 from telegram import Update, InputFile
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
 
-# ================= CONFIG =================
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+
+if not BOT_TOKEN:
+    raise ValueError("BOT_TOKEN not found")
 
 genai.configure(api_key=GEMINI_API_KEY)
 model = genai.GenerativeModel("gemini-2.5-flash")
 
-# ================= MATH FIX =================
 def format_math_text(text):
     replacements = {
         "²": "^2",
         "³": "^3",
         "√": "sqrt",
-        "√(": "sqrt(",
         "×": "x",
-        "÷": "/",
-        "–": "-",
-        "—": "-",
+        "÷": "/"
     }
-
     for k, v in replacements.items():
         text = text.replace(k, v)
-
     return text
 
-# ================= START =================
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(
-        "👋 Welcome!\n\n"
-        "📌 Mujhe bhejo:\n"
-        "1️⃣ MCQ questions\n"
-        "2️⃣ Ya topic (e.g. 'Math MCQ')\n\n"
-        "Main PPT bana ke de dunga 🎯"
-    )
+    await update.message.reply_text("Send MCQ or topic. I will make PPT 🎯")
 
-# ================= MESSAGE =================
-async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_text = update.message.text
+async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("⏳ Processing...")
 
     prompt = f"""
-{user_text}
+{update.message.text}
 
-MCQ format me do:
+Make MCQ:
 Question
 A)
 B)
 C)
 D)
 
-IMPORTANT:
-- Math ko simple text me likho
-- Use ^ for power (e.g. x^2)
-- Use sqrt() for root (e.g. sqrt(16))
-- Special symbols (², √) use mat karo
+Use ^ for power and sqrt() for root.
 """
 
-    await update.message.reply_text("⏳ PPT bana raha hu...")
-
     try:
-        # GEMINI RESPONSE
         response = model.generate_content(prompt)
-        formatted = response.text
+        data = response.text
 
-        questions = [q.strip() for q in formatted.split("\n\n") if q.strip()]
-
-        # PPT CREATE
         prs = Presentation()
         prs.slide_width = Inches(13.33)
         prs.slide_height = Inches(7.5)
 
-        blank_layout = prs.slide_layouts[6]
-
-        for q in questions:
-            slide = prs.slides.add_slide(blank_layout)
-
-            # Background black
-            bg = slide.background
-            fill = bg.fill
-            fill.solid()
-            fill.fore_color.rgb = RGBColor(0, 0, 0)
-
-            # Textbox
-            left = Inches(3.5)
-            top = Inches(1)
-            width = Inches(9.8)
-            height = Inches(5.5)
-
-            textbox = slide.shapes.add_textbox(left, top, width, height)
-            tf = textbox.text_frame
-            tf.clear()
-
-            # APPLY MATH FIX HERE
-            lines = [format_math_text(l.strip()) for l in q.split("\n") if l.strip()]
-
-            if lines and lines[0].lower().startswith("question"):
-                lines = lines[1:]
-
+        for q in data.split("\n\n"):
+            lines = [format_math_text(x.strip()) for x in q.split("\n") if x.strip()]
             if not lines:
                 continue
 
-            # Question
+            slide = prs.slides.add_slide(prs.slide_layouts[6])
+
+            bg = slide.background.fill
+            bg.solid()
+            bg.fore_color.rgb = RGBColor(0, 0, 0)
+
+            box = slide.shapes.add_textbox(Inches(2), Inches(1), Inches(10), Inches(5))
+            tf = box.text_frame
+
             p = tf.paragraphs[0]
             p.text = lines[0]
             p.font.size = Pt(32)
-            p.font.bold = True
-            p.font.color.rgb = RGBColor(255, 255, 0)
+            p.font.color.rgb = RGBColor(255,255,0)
 
-            # Options
-            for line in lines[1:]:
+            for l in lines[1:]:
                 p = tf.add_paragraph()
-                p.text = line
-                p.font.size = Pt(26)
-                p.font.color.rgb = RGBColor(255, 255, 255)
+                p.text = l
+                p.font.size = Pt(24)
+                p.font.color.rgb = RGBColor(255,255,255)
 
-        file_name = "mcq_questions.pptx"
-        prs.save(file_name)
+        file = "out.pptx"
+        prs.save(file)
 
-        # SEND FILE
-        with open(file_name, "rb") as f:
-            await update.message.reply_document(document=InputFile(f))
+        with open(file, "rb") as f:
+            await update.message.reply_document(InputFile(f))
 
-        os.remove(file_name)
+        os.remove(file)
 
     except Exception as e:
-        await update.message.reply_text(f"❌ Error: {str(e)}")
+        await update.message.reply_text(str(e))
 
-# ================= MAIN =================
 def main():
-    if not BOT_TOKEN:
-        print("❌ BOT_TOKEN missing!")
-        return
-
     app = Application.builder().token(BOT_TOKEN).build()
 
     app.add_handler(CommandHandler("start", start))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+    app.add_handler(MessageHandler(filters.TEXT, handle))
 
-    print("🚀 Bot running...")
     app.run_polling()
 
 if __name__ == "__main__":
