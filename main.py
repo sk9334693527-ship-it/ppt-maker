@@ -18,6 +18,9 @@ GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 genai.configure(api_key=GEMINI_API_KEY)
 model = genai.GenerativeModel("gemini-2.5-flash")
 
+# Railway path fix
+pytesseract.pytesseract.tesseract_cmd = "/usr/bin/tesseract"
+
 # ================= CLEAN =================
 def clean_text(text):
     text = re.sub(r"\*\*", "", text)
@@ -36,40 +39,53 @@ def format_math(text):
 # ================= START =================
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
-        "📸 Image bhejo ya text bhejo\nMain MCQ PPT bana dunga 🎯"
+        "📸 Image ya text bhejo\nMain MCQ PPT bana dunga 🎯"
     )
-
-# ================= TEXT HANDLER =================
-async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await process_input(update, context, update.message.text)
 
 # ================= IMAGE HANDLER =================
 async def handle_image(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("📸 Image process ho raha hai...")
 
-    photo = update.message.photo[-1]
-    file = await photo.get_file()
+    try:
+        photo = update.message.photo[-1]
+        file = await photo.get_file()
 
-    file_path = "input.jpg"
-    await file.download_to_drive(file_path)
+        file_path = "input.jpg"
+        await file.download_to_drive(file_path)
 
-    # OCR
-    img = Image.open(file_path)
-    extracted_text = pytesseract.image_to_string(img)
+        await update.message.reply_text("📥 Image downloaded")
 
-    os.remove(file_path)
+        img = Image.open(file_path)
+        img = img.convert("L")  # improve OCR
 
-    await process_input(update, context, extracted_text)
+        extracted_text = pytesseract.image_to_string(img, config='--oem 3 --psm 6')
 
-# ================= MAIN PROCESS =================
+        if not extracted_text.strip():
+            await update.message.reply_text("❌ OCR me text nahi mila (image clear nahi hai)")
+            return
+
+        await update.message.reply_text("🧾 OCR DONE:\n" + extracted_text[:500])
+
+        os.remove(file_path)
+
+        await process_input(update, context, extracted_text)
+
+    except Exception as e:
+        await update.message.reply_text(f"❌ IMAGE ERROR:\n{str(e)}")
+
+# ================= TEXT HANDLER =================
+async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await process_input(update, context, update.message.text)
+
+# ================= PROCESS =================
 async def process_input(update, context, user_text):
-    await update.message.reply_text("⏳ MCQ bana raha hu...")
+    await update.message.reply_text("🤖 AI processing...")
 
     prompt = f"""
 Niche diye gaye text me se sirf MCQ questions nikalo.
 
 RULES:
-- Sirf MCQ do
+- Only MCQ
 - No explanation
 - Format:
 
@@ -83,10 +99,19 @@ TEXT:
 {user_text}
 """
 
+    # ===== GEMINI =====
     try:
         response = model.generate_content(prompt)
+        await update.message.reply_text("✅ Gemini response mila")
+
         data = clean_text(response.text)
 
+    except Exception as e:
+        await update.message.reply_text(f"❌ GEMINI ERROR:\n{str(e)}")
+        return
+
+    # ===== PPT =====
+    try:
         questions = [q.strip() for q in data.split("\n\n") if q.strip()]
 
         prs = Presentation()
@@ -120,8 +145,10 @@ TEXT:
                 p.font.size = Pt(26)
                 p.font.color.rgb = RGBColor(255, 255, 255)
 
-        file_name = "mcq_output.pptx"
+        file_name = "final.pptx"
         prs.save(file_name)
+
+        await update.message.reply_text("📊 PPT ban gaya")
 
         with open(file_name, "rb") as f:
             await update.message.reply_document(InputFile(f))
@@ -129,19 +156,15 @@ TEXT:
         os.remove(file_name)
 
     except Exception as e:
-        await update.message.reply_text(f"❌ Error: {str(e)}")
+        await update.message.reply_text(f"❌ PPT ERROR:\n{str(e)}")
 
 # ================= MAIN =================
 def main():
     app = Application.builder().token(BOT_TOKEN).build()
 
     app.add_handler(CommandHandler("start", start))
-
-    # text
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
-
-    # image
     app.add_handler(MessageHandler(filters.PHOTO, handle_image))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
 
     print("🚀 Bot running...")
     app.run_polling()
