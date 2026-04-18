@@ -14,13 +14,31 @@ GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 genai.configure(api_key=GEMINI_API_KEY)
 model = genai.GenerativeModel("gemini-2.5-flash")
 
+# ================= MATH FIX =================
+def format_math_text(text):
+    replacements = {
+        "²": "^2",
+        "³": "^3",
+        "√": "sqrt",
+        "√(": "sqrt(",
+        "×": "x",
+        "÷": "/",
+        "–": "-",
+        "—": "-",
+    }
+
+    for k, v in replacements.items():
+        text = text.replace(k, v)
+
+    return text
+
 # ================= START =================
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "👋 Welcome!\n\n"
-        "📌 Mujhe message bhejo:\n"
+        "📌 Mujhe bhejo:\n"
         "1️⃣ MCQ questions\n"
-        "2️⃣ Ya koi topic (e.g. 'Science MCQ')\n\n"
+        "2️⃣ Ya topic (e.g. 'Math MCQ')\n\n"
         "Main PPT bana ke de dunga 🎯"
     )
 
@@ -37,12 +55,18 @@ A)
 B)
 C)
 D)
+
+IMPORTANT:
+- Math ko simple text me likho
+- Use ^ for power (e.g. x^2)
+- Use sqrt() for root (e.g. sqrt(16))
+- Special symbols (², √) use mat karo
 """
 
     await update.message.reply_text("⏳ PPT bana raha hu...")
 
     try:
-        # GEMINI
+        # GEMINI RESPONSE
         response = model.generate_content(prompt)
         formatted = response.text
 
@@ -74,7 +98,8 @@ D)
             tf = textbox.text_frame
             tf.clear()
 
-            lines = [l.strip() for l in q.split("\n") if l.strip()]
+            # APPLY MATH FIX HERE
+            lines = [format_math_text(l.strip()) for l in q.split("\n") if l.strip()]
 
             if lines and lines[0].lower().startswith("question"):
                 lines = lines[1:]
@@ -99,7 +124,7 @@ D)
         file_name = "mcq_questions.pptx"
         prs.save(file_name)
 
-        # Send file
+        # SEND FILE
         with open(file_name, "rb") as f:
             await update.message.reply_document(document=InputFile(f))
 
