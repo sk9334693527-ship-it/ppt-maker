@@ -4,7 +4,7 @@ import random
 from datetime import datetime
 
 import pdfplumber
-from PIL import Imageimport os
+from PIL import Image
 import json
 import random
 from datetime import datetime
