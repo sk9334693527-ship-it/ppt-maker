@@ -5,239 +5,6 @@ from datetime import datetime
 
 import pdfplumber
 from PIL import Image
-import json
-import random
-from datetime import datetime
-
-import pdfplumber
-from PIL import Image
-import pytesseract
-
-import google.generativeai as genai
-
-from telegram import Update, InputFile
-from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
-
-from pptx import Presentation
-from pptx.util import Pt
-
-# =========================
-# 🔐 ADMIN STATES
-# =========================
-admin_waiting = set()
-admin_logged = set()
-
-# =========================
-# 🔐 CONFIG
-# =========================
-BOT_TOKEN = os.getenv("BOT_TOKEN")
-ADMIN_ID = int(os.getenv("ADMIN_ID", "0"))
-
-PASSWORD = os.getenv("PASSWORD") or "1234"
-PASSWORD = str(PASSWORD).strip()
-
-NUMBER = os.getenv("NUMBER", "Not Set")
-
-GEMINI_API_KEYS = [
-    os.getenv("GEMINI_API"),
-    os.getenv("GEMINI1_API"),
-    os.getenv("GEMINI2_API"),
-    os.getenv("GEMINI3_API")
-]
-
-DATA_FILE = "data.json"
-
-# =========================
-# 💾 DATA
-# =========================
-def load_data():
-    if not os.path.exists(DATA_FILE):
-        return {}
-    with open(DATA_FILE, "r") as f:
-        return json.load(f)
-
-def save_data(data):
-    with open(DATA_FILE, "w") as f:
-        json.dump(data, f)
-
-data = load_data()
-
-def init_user(user):
-    uid = str(user.id)
-    if uid not in data:
-        data[uid] = {
-            "name": user.first_name,
-            "credits": 20,
-            "history": [],
-            "background": False,
-            "buffer": []   # 🔥 multi input buffer
-        }
-        save_data(data)
-
-# =========================
-# 🤖 GEMINI
-# =========================
-def get_model():
-    keys = [k for k in GEMINI_API_KEYS if k]
-    key = random.choice(keys)
-    genai.configure(api_key=key)
-    return genai.GenerativeModel("gemini-2.5-flash")
-
-def call_ai(prompt):
-    try:
-        model = get_model()
-        res = model.generate_content(prompt)
-        return res.text
-    except Exception as e:
-        print("AI ERROR:", e)
-        return "AI ERROR"
-
-# =========================
-# 📄 OCR / PDF
-# =========================
-def image_to_text(path):
-    img = Image.open(path)
-    return pytesseract.image_to_string(img)
-
-def pdf_to_text(path):
-    text = ""
-    with pdfplumber.open(path) as pdf:
-        for page in pdf.pages:
-            t = page.extract_text()
-            if t:
-                text += t + "\n"
-    return text
-
-# =========================
-# 🧠 PROMPT
-# =========================
-def build_prompt(text, bilingual=False):
-    return f"""
-Convert ALL content into MCQ format.
-
-Rules:
-- One question per block
-- Clean format
-- No special symbols
-
-{text}
-"""
-
-# =========================
-# 🔥 TEXT CLEANER (IMPORTANT FIX)
-# =========================
-def clean_text(text):
-    text = text.replace("\x00", "")
-    text = text.replace("\r", "")
-    text = text.strip()
-    return text[:2000]  # overflow control
-
-# =========================
-# 🎞 PPT FIXED
-# =========================
-def create_ppt(slides, filename):
-    prs = Presentation()
-
-    for s in slides:
-        slide_layout = prs.slide_layouts[1]
-        slide = prs.slides.add_slide(slide_layout)
-
-        title = slide.shapes.title
-        content = slide.placeholders[1]
-
-        title.text = "Question"
-
-        safe_text = clean_text(s)
-
-        tf = content.text_frame
-        tf.clear()
-
-        p = tf.add_paragraph()
-        p.text = safe_text
-        p.font.size = Pt(18)
-
-    prs.save(filename)
-    return filename
-
-# =========================
-# START
-# =========================
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user = update.message.from_user
-    init_user(user)
-    uid = str(user.id)
-
-    d = data[uid]
-
-    await update.message.reply_text(f"""
-👤 {d['name']}
-🆔 {uid}
-💳 {d['credits']}
-
-/objective
-/objective2
-/admin
-
-📞 {NUMBER}
-""")
-
-# =========================
-# COMMANDS
-# =========================
-async def objective(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    context.user_data["mode"] = "objective"
-    await update.message.reply_text("Send multiple text, then send /done")
-
-async def done(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    uid = str(update.message.from_user.id)
-
-    if not data[uid]["buffer"]:
-        await update.message.reply_text("No data")
-        return
-
-    full_text = "\n".join(data[uid]["buffer"])
-    data[uid]["buffer"] = []
-
-    prompt = build_prompt(full_text)
-    ai_text = call_ai(prompt)
-
-    slides = [s.strip() for s in ai_text.split("\n\n") if s.strip()]
-
-    ppt = f"{uid}.pptx"
-    create_ppt(slides, ppt)
-
-    await update.message.reply_document(InputFile(ppt, filename="output.pptx"))
-
-# =========================
-# HANDLE
-# =========================
-async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user = update.message.from_user
-    uid = str(user.id)
-    init_user(user)
-
-    if update.message.text:
-        data[uid]["buffer"].append(update.message.text)
-        save_data(data)
-        await update.message.reply_text("Added")
-
-# =========================
-# MAIN
-# =========================
-def main():
-    app = Application.builder().token(BOT_TOKEN).build()
-
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("objective", objective))
-    app.add_handler(CommandHandler("done", done))
-
-    app.add_handler(MessageHandler(filters.ALL, handle))
-
-    print("Bot running...")
-    app.run_polling()
-
-if __name__ == "__main__":
-    main()
 import pytesseract
 
 import google.generativeai as genai
@@ -318,10 +85,10 @@ def call_ai(prompt):
     try:
         model = get_model()
         res = model.generate_content(prompt)
-        return res.text
+        return res.text if res.text else "No content generated"
     except Exception as e:
         print("AI ERROR:", e)
-        return "AI ERROR"
+        return "Error generating content"
 
 # =========================
 # 📄 OCR
@@ -366,17 +133,53 @@ One question per slide
 """
 
 # =========================
-# 🎞 PPT
+# 🧹 CLEAN TEXT (NEW)
+# =========================
+def clean_text(text):
+    if not text:
+        return ""
+    text = text.replace("\x00", "")
+    text = text.replace("\r", "")
+    return text.strip()
+
+# =========================
+# 🎞 PPT FIXED
 # =========================
 def create_ppt(slides, filename):
     prs = Presentation()
 
     for s in slides:
-        slide = prs.slides.add_slide(prs.slide_layouts[1])
-        slide.shapes.title.text = "Question"
-        slide.placeholders[1].text = s
+        s = clean_text(s)
 
-        for p in slide.placeholders[1].text_frame.paragraphs:
+        if not s:
+            continue
+
+        slide_layout = prs.slide_layouts[1]
+        slide = prs.slides.add_slide(slide_layout)
+
+        title = slide.shapes.title
+        content = slide.placeholders[1]
+
+        title.text = "Question"
+
+        tf = content.text_frame
+        tf.clear()
+
+        lines = s.split("\n")
+
+        for i, line in enumerate(lines):
+            line = clean_text(line)
+            if not line:
+                continue
+
+            if i == 0:
+                tf.text = line
+            else:
+                p = tf.add_paragraph()
+                p.text = line
+                p.level = 1
+
+        for p in tf.paragraphs:
             for r in p.runs:
                 r.font.size = Pt(18)
 
@@ -410,18 +213,16 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 """)
 
 # =========================
-# COMMANDS (UPDATED)
+# COMMANDS
 # =========================
 async def objective(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["mode"] = "objective"
     context.user_data["buffer"] = []
-
     await update.message.reply_text("📥 Send multiple texts\nThen send /make")
 
 async def objective2(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["mode"] = "objective2"
     context.user_data["buffer"] = []
-
     await update.message.reply_text("📥 Send Hindi+English texts\nThen /make")
 
 async def make(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -439,7 +240,18 @@ async def make(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     ai_text = call_ai(prompt)
 
-    slides = [s.strip() for s in ai_text.split("\n\n") if s.strip()]
+    # 🔥 SAFE SLIDE SPLIT
+    raw_slides = ai_text.split("\n\n")
+    slides = []
+
+    for s in raw_slides:
+        s = clean_text(s)
+        if len(s) > 10:
+            slides.append(s)
+
+    if not slides:
+        await update.message.reply_text("❌ Failed to generate slides")
+        return
 
     ppt = f"{uid}_{int(datetime.now().timestamp())}.pptx"
     create_ppt(slides, ppt)
@@ -472,7 +284,7 @@ async def admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("🔐 Send password")
 
 # =========================
-# MAIN HANDLE (UPDATED)
+# MAIN HANDLE
 # =========================
 async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.message.from_user
@@ -492,7 +304,7 @@ async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text("❌ Wrong password")
         return
 
-    # 🔥 MULTI MESSAGE COLLECT
+    # MULTI MESSAGE
     if update.message.text and context.user_data.get("mode") in ["objective", "objective2"]:
         if update.message.text != "/make":
             context.user_data.setdefault("buffer", []).append(update.message.text)
