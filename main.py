@@ -25,13 +25,11 @@ admin_logged = set()
 # 🔐 CONFIG
 # =========================
 BOT_TOKEN = os.getenv("BOT_TOKEN")
-
 ADMIN_ID = int(os.getenv("ADMIN_ID", "0"))
 
 PASSWORD = os.getenv("PASSWORD")
 if PASSWORD is None:
     PASSWORD = "1234"
-
 PASSWORD = str(PASSWORD).strip()
 
 NUMBER = os.getenv("NUMBER", "Not Set")
@@ -170,7 +168,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 📌 MENU:
 /objective
 /objective2
-/topic
+/make
 /background
 /dbackground
 /admin
@@ -179,23 +177,52 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 """)
 
 # =========================
-# COMMANDS
+# COMMANDS (UPDATED)
 # =========================
 async def objective(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["mode"] = "objective"
+    context.user_data["buffer"] = []
 
-    if context.args:
-        context.user_data["pending_text"] = " ".join(context.args)
-    else:
-        await update.message.reply_text("Send text/image/pdf")
+    await update.message.reply_text("📥 Send multiple texts\nThen send /make")
 
 async def objective2(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["mode"] = "objective2"
+    context.user_data["buffer"] = []
 
-    if context.args:
-        context.user_data["pending_text"] = " ".join(context.args)
-    else:
-        await update.message.reply_text("Send bilingual input")
+    await update.message.reply_text("📥 Send Hindi+English texts\nThen /make")
+
+async def make(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.message.from_user
+    uid = str(user.id)
+
+    if "buffer" not in context.user_data or not context.user_data["buffer"]:
+        await update.message.reply_text("❌ No data found")
+        return
+
+    full_text = "\n".join(context.user_data["buffer"])
+
+    mode = context.user_data.get("mode", "objective")
+    prompt = build_prompt(full_text, bilingual=(mode == "objective2"))
+
+    ai_text = call_ai(prompt)
+
+    slides = [s.strip() for s in ai_text.split("\n\n") if s.strip()]
+
+    ppt = f"{uid}_{int(datetime.now().timestamp())}.pptx"
+    create_ppt(slides, ppt)
+
+    data[uid]["credits"] -= len(slides)
+    data[uid]["history"].append({
+        "time": str(datetime.now()),
+        "slides": len(slides)
+    })
+    save_data(data)
+
+    context.user_data["buffer"] = []
+
+    await update.message.reply_document(
+        document=InputFile(ppt, filename=ppt)
+    )
 
 async def background(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("Send background ppt")
@@ -212,7 +239,7 @@ async def admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("🔐 Send password")
 
 # =========================
-# MAIN HANDLE
+# MAIN HANDLE (UPDATED)
 # =========================
 async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.message.from_user
@@ -226,68 +253,24 @@ async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if text_msg == PASSWORD and uid == ADMIN_ID:
             admin_waiting.remove(uid)
             admin_logged.add(uid)
-
             await update.message.reply_text("✅ ADMIN PANEL")
         else:
             admin_waiting.remove(uid)
             await update.message.reply_text("❌ Wrong password")
         return
 
+    # 🔥 MULTI MESSAGE COLLECT
+    if update.message.text and context.user_data.get("mode") in ["objective", "objective2"]:
+        if update.message.text != "/make":
+            context.user_data.setdefault("buffer", []).append(update.message.text)
+            await update.message.reply_text("✅ Added")
+            return
+
     # CREDIT CHECK
     uid_str = str(uid)
     if data[uid_str]["credits"] <= 0:
         await update.message.reply_text("No credits")
         return
-
-    # INPUT
-    text = ""
-
-    if "pending_text" in context.user_data:
-        text = context.user_data.pop("pending_text")
-
-    elif update.message.text:
-        text = update.message.text
-
-    elif update.message.photo:
-        file = await update.message.photo[-1].get_file()
-        path = f"{uid}.jpg"
-        await file.download_to_drive(path)
-        text = image_to_text(path)
-
-    elif update.message.document:
-        file = await update.message.document.get_file()
-        path = f"{uid}_file"
-        await file.download_to_drive(path)
-
-        if path.lower().endswith(".pdf"):
-            text = pdf_to_text(path)
-        else:
-            text = image_to_text(path)
-
-    # AI
-    mode = context.user_data.get("mode", "objective")
-    prompt = build_prompt(text, bilingual=(mode == "objective2"))
-
-    ai_text = call_ai(prompt)
-
-    slides = [s.strip() for s in ai_text.split("\n\n") if s.strip()]
-
-    # 🔥 FIXED FILENAME
-    ppt = f"{uid}_{int(datetime.now().timestamp())}.pptx"
-    create_ppt(slides, ppt)
-
-    # CREDIT UPDATE
-    data[uid_str]["credits"] -= len(slides)
-    data[uid_str]["history"].append({
-        "time": str(datetime.now()),
-        "slides": len(slides)
-    })
-    save_data(data)
-
-    # 🔥 FINAL FIX (IMPORTANT)
-    await update.message.reply_document(
-        document=InputFile(ppt, filename=ppt)
-    )
 
 # =========================
 # MAIN
@@ -298,6 +281,7 @@ def main():
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("objective", objective))
     app.add_handler(CommandHandler("objective2", objective2))
+    app.add_handler(CommandHandler("make", make))
     app.add_handler(CommandHandler("background", background))
     app.add_handler(CommandHandler("dbackground", dbackground))
     app.add_handler(CommandHandler("admin", admin))
