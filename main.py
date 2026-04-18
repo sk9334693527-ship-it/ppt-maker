@@ -27,9 +27,7 @@ admin_logged = set()
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 ADMIN_ID = int(os.getenv("ADMIN_ID", "0"))
 
-PASSWORD = os.getenv("PASSWORD")
-if PASSWORD is None:
-    PASSWORD = "1234"
+PASSWORD = os.getenv("PASSWORD") or "1234"
 PASSWORD = str(PASSWORD).strip()
 
 NUMBER = os.getenv("NUMBER", "Not Set")
@@ -91,23 +89,15 @@ def call_ai(prompt):
         return "Error generating content"
 
 # =========================
-# 📄 OCR
+# 🧹 CLEAN TEXT
 # =========================
-def image_to_text(path):
-    img = Image.open(path)
-    return pytesseract.image_to_string(img)
-
-# =========================
-# 📄 PDF
-# =========================
-def pdf_to_text(path):
-    text = ""
-    with pdfplumber.open(path) as pdf:
-        for page in pdf.pages:
-            t = page.extract_text()
-            if t:
-                text += t + "\n"
-    return text
+def clean_text(text):
+    if not text:
+        return ""
+    text = text.replace("\x00", "")
+    text = text.replace("\r", "")
+    text = text.encode("utf-8", "ignore").decode("utf-8")
+    return text.strip()
 
 # =========================
 # 🧠 PROMPT
@@ -115,55 +105,62 @@ def pdf_to_text(path):
 def build_prompt(text, bilingual=False):
     if bilingual:
         return f"""
-Convert into MCQ PPT format.
+Create MCQ slides.
+
+Rules:
+- Plain text only
+- Format:
+Question
+A) option
+B) option
+C) option
+D) option
 
 Hindi + English
-One question per slide
 
 {text}
 """
     else:
         return f"""
-Convert into MCQ PPT format.
+Create MCQ slides.
+
+Rules:
+- Plain text only
+- Format:
+Question
+A) option
+B) option
+C) option
+D) option
 
 English only
-One question per slide
 
 {text}
 """
 
 # =========================
-# 🧹 CLEAN TEXT (NEW)
-# =========================
-def clean_text(text):
-    if not text:
-        return ""
-    text = text.replace("\x00", "")
-    text = text.replace("\r", "")
-    return text.strip()
-
-# =========================
-# 🎞 PPT FIXED
+# 🎞 PPT (FINAL FIX)
 # =========================
 def create_ppt(slides, filename):
     prs = Presentation()
 
     for s in slides:
         s = clean_text(s)
-
         if not s:
             continue
 
-        slide_layout = prs.slide_layouts[1]
+        # blank slide
+        slide_layout = prs.slide_layouts[6]
         slide = prs.slides.add_slide(slide_layout)
 
-        title = slide.shapes.title
-        content = slide.placeholders[1]
+        # title box
+        title_box = slide.shapes.add_textbox(Pt(20), Pt(20), Pt(900), Pt(50))
+        title_tf = title_box.text_frame
+        title_tf.text = "Question"
 
-        title.text = "Question"
-
-        tf = content.text_frame
-        tf.clear()
+        # content box
+        content_box = slide.shapes.add_textbox(Pt(20), Pt(100), Pt(900), Pt(400))
+        tf = content_box.text_frame
 
         lines = s.split("\n")
 
@@ -177,11 +174,11 @@ def create_ppt(slides, filename):
             else:
                 p = tf.add_paragraph()
                 p.text = line
-                p.level = 1
 
+        # font size
         for p in tf.paragraphs:
             for r in p.runs:
-                r.font.size = Pt(18)
+                r.font.size = Pt(20)
 
     prs.save(filename)
     return filename
@@ -193,7 +190,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.message.from_user
     init_user(user)
     uid = str(user.id)
-
     d = data[uid]
 
     await update.message.reply_text(f"""
@@ -205,8 +201,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 /objective
 /objective2
 /make
-/background
-/dbackground
 /admin
 
 📞 {NUMBER}
@@ -215,52 +209,46 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # =========================
 # COMMANDS
 # =========================
-async def objective(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def objective(update, context):
     context.user_data["mode"] = "objective"
     context.user_data["buffer"] = []
-    await update.message.reply_text("📥 Send multiple texts\nThen send /make")
+    await update.message.reply_text("Send text then /make")
 
-async def objective2(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def objective2(update, context):
     context.user_data["mode"] = "objective2"
     context.user_data["buffer"] = []
-    await update.message.reply_text("📥 Send Hindi+English texts\nThen /make")
+    await update.message.reply_text("Send Hindi+English text then /make")
 
-async def make(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def make(update, context):
     user = update.message.from_user
     uid = str(user.id)
 
-    if "buffer" not in context.user_data or not context.user_data["buffer"]:
-        await update.message.reply_text("❌ No data found")
+    if not context.user_data.get("buffer"):
+        await update.message.reply_text("No data")
         return
 
-    full_text = "\n".join(context.user_data["buffer"])
-
+    text = "\n".join(context.user_data["buffer"])
     mode = context.user_data.get("mode", "objective")
-    prompt = build_prompt(full_text, bilingual=(mode == "objective2"))
 
+    prompt = build_prompt(text, bilingual=(mode == "objective2"))
     ai_text = call_ai(prompt)
 
-    # 🔥 SAFE SLIDE SPLIT
-    raw_slides = ai_text.split("\n\n")
+    raw = ai_text.split("\n\n")
     slides = []
 
-    for s in raw_slides:
+    for s in raw:
         s = clean_text(s)
         if len(s) > 10:
             slides.append(s)
 
     if not slides:
-        await update.message.reply_text("❌ Failed to generate slides")
+        await update.message.reply_text("Failed to generate")
         return
 
     ppt = f"{uid}_{int(datetime.now().timestamp())}.pptx"
     create_ppt(slides, ppt)
 
     data[uid]["credits"] -= len(slides)
-    data[uid]["history"].append({
-        "time": str(datetime.now()),
-        "slides": len(slides)
-    })
     save_data(data)
 
     context.user_data["buffer"] = []
@@ -269,53 +257,38 @@ async def make(update: Update, context: ContextTypes.DEFAULT_TYPE):
         document=InputFile(ppt, filename=ppt)
     )
 
-async def background(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("Send background ppt")
-
-async def dbackground(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    uid = str(update.message.from_user.id)
-    data[uid]["background"] = False
-    save_data(data)
-    await update.message.reply_text("Background removed")
-
-async def admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def admin(update, context):
     uid = update.message.from_user.id
     admin_waiting.add(uid)
-    await update.message.reply_text("🔐 Send password")
+    await update.message.reply_text("Send password")
 
 # =========================
-# MAIN HANDLE
+# HANDLE
 # =========================
-async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def handle(update, context):
     user = update.message.from_user
     uid = user.id
     init_user(user)
 
     text_msg = update.message.text.strip() if update.message.text else ""
 
-    # ADMIN LOGIN
     if uid in admin_waiting:
         if text_msg == PASSWORD and uid == ADMIN_ID:
-            admin_waiting.remove(uid)
             admin_logged.add(uid)
-            await update.message.reply_text("✅ ADMIN PANEL")
+            await update.message.reply_text("Admin login success")
         else:
-            admin_waiting.remove(uid)
-            await update.message.reply_text("❌ Wrong password")
+            await update.message.reply_text("Wrong password")
+        admin_waiting.remove(uid)
         return
 
-    # MULTI MESSAGE
-    if update.message.text and context.user_data.get("mode") in ["objective", "objective2"]:
+    if update.message.text and context.user_data.get("mode"):
         if update.message.text != "/make":
             context.user_data.setdefault("buffer", []).append(update.message.text)
-            await update.message.reply_text("✅ Added")
+            await update.message.reply_text("Added")
             return
 
-    # CREDIT CHECK
-    uid_str = str(uid)
-    if data[uid_str]["credits"] <= 0:
+    if data[str(uid)]["credits"] <= 0:
         await update.message.reply_text("No credits")
-        return
 
 # =========================
 # MAIN
@@ -327,8 +300,6 @@ def main():
     app.add_handler(CommandHandler("objective", objective))
     app.add_handler(CommandHandler("objective2", objective2))
     app.add_handler(CommandHandler("make", make))
-    app.add_handler(CommandHandler("background", background))
-    app.add_handler(CommandHandler("dbackground", dbackground))
     app.add_handler(CommandHandler("admin", admin))
 
     app.add_handler(MessageHandler(filters.ALL, handle))
