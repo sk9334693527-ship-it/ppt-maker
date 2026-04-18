@@ -8,35 +8,41 @@ from pptx.dml.color import RGBColor
 from telegram import Update, InputFile
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
 
+# ================= CONFIG =================
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
 genai.configure(api_key=GEMINI_API_KEY)
 model = genai.GenerativeModel("gemini-2.5-flash")
 
-# ✅ CLEAN TEXT
+# ================= CLEAN TEXT =================
 def clean_text(text):
-    text = re.sub(r"\*\*", "", text)  # remove **
-    text = re.sub(r"`", "", text)     # remove `
-    text = re.sub(r"Explanation.*", "", text, flags=re.DOTALL)  # remove explanation
+    text = re.sub(r"\*\*", "", text)
+    text = re.sub(r"`", "", text)
+    text = re.sub(r"Explanation.*", "", text, flags=re.DOTALL)
     return text.strip()
 
-# ✅ MATH FIX
+# ================= MATH FORMAT =================
 def format_math(text):
-    replacements = {
-        "²": "^2",
-        "³": "^3",
-        "√": "sqrt",
-        "×": "x",
-        "÷": "/"
-    }
-    for k, v in replacements.items():
-        text = text.replace(k, v)
+    # sqrt(x) → √x
+    text = re.sub(r"sqrt\((.*?)\)", r"√\1", text)
+
+    # powers
+    text = re.sub(r"(\d+)\^2", r"\1²", text)
+    text = re.sub(r"(\d+)\^3", r"\1³", text)
+
+    # fraction slash better
+    text = text.replace("/", "⁄")
+
     return text
 
+# ================= START =================
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("Send MCQ or topic 🎯")
+    await update.message.reply_text(
+        "👋 Send MCQ ya topic (Math / Science)\nMain PPT bana dunga 🎯"
+    )
 
+# ================= HANDLE =================
 async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("⏳ PPT bana raha hu...")
 
@@ -44,7 +50,7 @@ async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
 {update.message.text}
 
 STRICT RULES:
-- Only MCQ do
+- Only MCQ
 - No explanation
 - No markdown
 - Format:
@@ -55,9 +61,8 @@ B)
 C)
 D)
 
-Math use:
-^ for power
-sqrt() for root
+Math rules:
+Use sqrt() and fractions like 3/4
 """
 
     try:
@@ -78,6 +83,7 @@ sqrt() for root
 
             slide = prs.slides.add_slide(prs.slide_layouts[6])
 
+            # Background
             bg = slide.background.fill
             bg.solid()
             bg.fore_color.rgb = RGBColor(0, 0, 0)
@@ -90,33 +96,38 @@ sqrt() for root
             p.text = lines[0]
             p.font.size = Pt(32)
             p.font.bold = True
-            p.font.color.rgb = RGBColor(255,255,0)
+            p.font.color.rgb = RGBColor(255, 255, 0)
 
             # Options
             for l in lines[1:]:
                 p = tf.add_paragraph()
                 p.text = l
-                p.font.size = Pt(24)
-                p.font.color.rgb = RGBColor(255,255,255)
+                p.font.size = Pt(26)
+                p.font.color.rgb = RGBColor(255, 255, 255)
 
-        file = "final.pptx"
-        prs.save(file)
+        file_name = "final.pptx"
+        prs.save(file_name)
 
-        with open(file, "rb") as f:
+        with open(file_name, "rb") as f:
             await update.message.reply_document(InputFile(f))
 
-        os.remove(file)
+        os.remove(file_name)
 
     except Exception as e:
-        await update.message.reply_text(f"Error: {str(e)}")
+        await update.message.reply_text(f"❌ Error: {str(e)}")
 
+# ================= MAIN =================
 def main():
+    if not BOT_TOKEN:
+        print("❌ BOT_TOKEN missing")
+        return
+
     app = Application.builder().token(BOT_TOKEN).build()
 
     app.add_handler(CommandHandler("start", start))
     app.add_handler(MessageHandler(filters.TEXT, handle))
 
-    print("Bot running...")
+    print("🚀 Bot running...")
     app.run_polling()
 
 if __name__ == "__main__":
