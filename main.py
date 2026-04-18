@@ -26,12 +26,11 @@ admin_logged = set()
 # =========================
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 
-ADMIN_ID = int(os.getenv("ADMIN_ID", "0"))   # 👈 env se lo
+ADMIN_ID = int(os.getenv("ADMIN_ID", "0"))
 
-# 🔥 PASSWORD FIX (MOST IMPORTANT)
 PASSWORD = os.getenv("PASSWORD")
 if PASSWORD is None:
-    PASSWORD = "1234"   # fallback (test ke liye)
+    PASSWORD = "1234"
 
 PASSWORD = str(PASSWORD).strip()
 
@@ -180,15 +179,23 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 """)
 
 # =========================
-# COMMANDS
+# COMMANDS (FIXED)
 # =========================
 async def objective(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["mode"] = "objective"
-    await update.message.reply_text("Send text/image/pdf")
+
+    if context.args:
+        context.user_data["pending_text"] = " ".join(context.args)
+    else:
+        await update.message.reply_text("Send text/image/pdf")
 
 async def objective2(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["mode"] = "objective2"
-    await update.message.reply_text("Send bilingual input")
+
+    if context.args:
+        context.user_data["pending_text"] = " ".join(context.args)
+    else:
+        await update.message.reply_text("Send bilingual input")
 
 async def background(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("Send background ppt")
@@ -214,11 +221,8 @@ async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     text_msg = update.message.text.strip() if update.message.text else ""
 
-    # 🔥 ADMIN LOGIN FIX
+    # ADMIN LOGIN
     if uid in admin_waiting:
-        print("INPUT PASSWORD:", text_msg)
-        print("REAL PASSWORD:", PASSWORD)
-
         if text_msg == PASSWORD and uid == ADMIN_ID:
             admin_waiting.remove(uid)
             admin_logged.add(uid)
@@ -234,37 +238,21 @@ async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
         else:
             admin_waiting.remove(uid)
             await update.message.reply_text("❌ Wrong password")
-
         return
 
-    # 🔥 ADMIN COMMANDS
-    if uid in admin_logged and text_msg:
-        if text_msg.startswith("/add"):
-            try:
-                _, u, c = text_msg.split()
-                u = str(u)
-                c = int(c)
-
-                if u not in data:
-                    data[u] = {"name": "User", "credits": 0, "history": []}
-
-                data[u]["credits"] += c
-                save_data(data)
-                await update.message.reply_text("✅ Credit added")
-            except:
-                await update.message.reply_text("Use: /add user_id credits")
-            return
-
-    # 🚫 CREDIT CHECK
+    # CREDIT CHECK
     uid_str = str(uid)
     if data[uid_str]["credits"] <= 0:
         await update.message.reply_text("No credits")
         return
 
-    # 📥 INPUT
+    # 📥 INPUT FIX
     text = ""
 
-    if update.message.text:
+    if "pending_text" in context.user_data:
+        text = context.user_data.pop("pending_text")
+
+    elif update.message.text:
         text = update.message.text
 
     elif update.message.photo:
@@ -294,7 +282,7 @@ async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ppt = f"{uid}.pptx"
     create_ppt(slides, ppt)
 
-    # 💳 CREDIT UPDATE
+    # CREDIT UPDATE
     data[uid_str]["credits"] -= len(slides)
     data[uid_str]["history"].append({
         "time": str(datetime.now()),
